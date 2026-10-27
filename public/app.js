@@ -22,6 +22,17 @@ function applyTheme(theme) {
   updateContrast()
 }
 
+// 手机浏览器地址栏 / 任务切换器配色：不往 HTML 里塞静态标签，切主题时动态同步
+function syncBrowserColor(hex) {
+  let m = document.querySelector('meta[name="theme-color"]')
+  if (!m) {
+    m = document.createElement('meta')
+    m.name = 'theme-color'
+    document.head.appendChild(m)
+  }
+  m.content = hex
+}
+
 // 文字颜色不能只看主题：有背景图时要按“卡片实际可见亮度”判定
 // 可见亮度 = 卡片底色×浓度 + 背景图亮度×(1-遮罩)×(1-浓度)
 function updateContrast() {
@@ -49,6 +60,8 @@ function updateContrast() {
   // 顶栏等卡在背景上的元素，用背景亮度单独定色，避免“深色背景 + 深色字”看不见
   root.setProperty('--fg-out', pageLuma < 150 ? 'rgba(245,245,245,.9)' : 'rgba(26,26,26,.85)')
   root.setProperty('--fg-out-weak', pageLuma < 150 ? 'rgba(245,245,245,.6)' : 'rgba(26,26,26,.55)')
+  // 有背景图时页面主色就是图（压暗后的均值），否则就是主题底色
+  syncBrowserColor(bg.img ? (pageLuma < 150 ? '#101014' : '#e9e9e6') : currentTheme.bg)
 
   document.querySelectorAll('#fg-mode-group button').forEach((b) => b.classList.toggle('active', b.dataset.fg === bg.fgMode))
 }
@@ -1088,16 +1101,24 @@ let drag = null
 const ghost = document.createElement('div')
 ghost.className = 'ghost'
 
+// 手机上 CSS 会强制转单栏（两栏整宽上下叠），命中判断必须跟着换轴，否则永远只能拖回第一栏
+const mqNarrow = window.matchMedia('(max-width: 760px)')
+
 function insertGhost(x, y) {
   const cols = [$('col-a'), $('col-b')]
-  let col = cols.find((c) => {
-    const r = c.getBoundingClientRect()
-    return x >= r.left - 14 && x <= r.right + 14 && y >= r.top - 60 && y <= r.bottom + 60
-  })
-  if (!col) {
-    col = cols.map((c) => ({ c, r: c.getBoundingClientRect() }))
-      .sort((p, q) => Math.abs(x - (p.r.left + p.r.right) / 2) - Math.abs(x - (q.r.left + q.r.right) / 2))[0].c
+  const stacked = $('app-view').classList.contains('stack') || mqNarrow.matches
+  const rects = cols.map((c) => ({ c, r: c.getBoundingClientRect() }))
+  // 单栏看 y、双栏看 x：另一种坐标在两栏里是重合的，拿它判断会一直命中第一栏
+  let hit = rects.find(({ r }) => (stacked
+    ? y >= r.top - 40 && y <= r.bottom + 40
+    : x >= r.left - 14 && x <= r.right + 14))
+  if (!hit) {
+    // 拖到两栏夹缝或栏外留白：取中心最近的一栏
+    hit = rects
+      .map((o) => ({ c: o.c, d: Math.hypot((o.r.left + o.r.right) / 2 - x, (o.r.top + o.r.bottom) / 2 - y) }))
+      .sort((p, q) => p.d - q.d)[0]
   }
+  const col = hit.c
   cols.forEach((c) => c.classList.toggle('dropping', c === col)) // 亮出“要落到这一栏”
   const items = [...col.querySelectorAll('.card')].filter((it) => it !== drag.card)
   let node = null
@@ -1262,14 +1283,23 @@ function makeDraggable(card) {
     z.addEventListener('pointerdown', (e) => {
       if (drag || $('app-view').classList.contains('hidden')) return
       e.preventDefault()
-      startDrag(card, e)
-      const onMove = (ev) => moveDrag(ev)
+      const x0 = e.clientX
+      const y0 = e.clientY
+      // 手指碰边框往往只是滑动起点，先走 8px 才抬起卡片；鼠标仍保留“按下即抓起”的跟手性
+      const slop = e.pointerType === 'touch' ? 8 : 0
+      const onMove = (ev) => {
+        if (!drag) {
+          if (slop && Math.hypot(ev.clientX - x0, ev.clientY - y0) < slop) return
+          startDrag(card, e) // 仍用 pointerdown 的坐标起算，补掉这段行程才不会让卡片跳位
+        }
+        moveDrag(ev)
+      }
       const onUp = () => {
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerup', onUp)
         window.removeEventListener('pointercancel', onUp)
         window.removeEventListener('blur', onUp)
-        endDrag()
+        if (drag) endDrag() // 没达到阈值就松手：卡片根本没被抬起来，不必走落位动画
       }
       // 触屏被系统手势打断（pointercancel）、拖到一半切窗口（blur）都要落位，
       // 否则卡片永远停在 body 上的 fixed 状态，跟其他面板叠在一起

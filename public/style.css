@@ -19,6 +19,8 @@ body {
   background: var(--bg);
   color: var(--fg);
   min-height: 100vh;
+  min-height: 100dvh;   /* 手机地址栏收放时 100vh 会算错（多出一屏白）；老浏览器自动退回上一行 */
+  -webkit-tap-highlight-color: transparent;   /* 手机上点按钮不留灰色块 */
   transition: background 0.4s, color 0.4s;
 }
 
@@ -26,7 +28,12 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;            /* 窄屏（含手机）让控件整块换行，而不是把主题色圆点挤出屏幕 */
+  row-gap: 10px;
+  column-gap: 16px;
   padding: 28px 40px 0;
+  padding-left: max(40px, env(safe-area-inset-left));
+  padding-right: max(40px, env(safe-area-inset-right));
   max-width: 1240px;
   margin: 0 auto;
   color: var(--fg-out);
@@ -40,11 +47,12 @@ header .link-btn { color: var(--fg-out-weak); }
 header .link-btn:hover { color: var(--fg-out); }
 #user-box { color: var(--fg-out-weak); }
 
-#theme-picker { display: flex; gap: 10px; }
+#theme-picker { display: flex; gap: 10px; flex: 0 0 auto; }
 
 .theme-dot {
   width: 20px;
   height: 20px;
+  flex: 0 0 auto;
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
@@ -63,6 +71,7 @@ header .link-btn:hover { color: var(--fg-out); }
   max-width: 1240px;
   margin: 0 auto;
   min-height: calc(100vh - 86px);
+  min-height: calc(100dvh - 86px);
 }
 
 .col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
@@ -92,8 +101,9 @@ header .link-btn:hover { color: var(--fg-out); }
 }
 #task-list { max-height: 46vh; overflow-y: auto; }
 
-/* 捏住卡片边框即可拖动：四条内嵌命中区 */
-.edge { position: absolute; z-index: 5; }
+/* 捏住卡片边框即可拖动：四条内嵌命中区
+ * touch-action: none 是关键 —— 不加的话手指一拖浏览器先抢走手势去滚页，拖拽根本不会开始 */
+.edge { position: absolute; z-index: 5; touch-action: none; }
 .edge-t { left: 14px; right: 14px; top: 0; height: 10px; cursor: grab; }
 .edge-b { left: 14px; right: 14px; bottom: 0; height: 10px; cursor: grab; }
 .edge-l { top: 14px; bottom: 14px; left: 0; width: 10px; cursor: grab; }
@@ -109,6 +119,7 @@ header .link-btn:hover { color: var(--fg-out); }
   cursor: grab;
   z-index: 6;
   opacity: 0;
+  touch-action: none;
   transition: opacity 0.25s;
   background-image: radial-gradient(var(--fg-weak) 1px, transparent 1.4px);
   background-size: 7px 5px;
@@ -121,6 +132,7 @@ header .link-btn:hover { color: var(--fg-out); }
   z-index: 60;
   margin: 0;
   pointer-events: none;
+  user-select: none;
   box-shadow: 0 26px 64px rgba(0, 0, 0, 0.3);
   transition: none;
   will-change: transform, width, height;
@@ -292,7 +304,7 @@ h2 {
 
 /* ---------- 顶栏用户区 ---------- */
 
-.header-right { display: flex; align-items: center; gap: 22px; }
+.header-right { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; row-gap: 12px; }
 #user-box { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--fg-weak); }
 .link-btn {
   border: none;
@@ -377,16 +389,19 @@ select {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.35);
-  display: grid;
-  place-items: center;
+  display: flex;
+  overflow-y: auto;
   z-index: 10;
   padding: 20px;
 }
+/* flex 容器里用 margin:auto 做“安全居中”：弹窗内容高于视口时（手机上背景面板就是这样）
+ * 依然能滚到顶，而 grid 的 place-items:center 会把上半部分裁在屏幕外 */
 .modal-box {
   background: var(--bg);
   color: var(--fg);
   border-radius: 18px;
   padding: 26px;
+  margin: auto;
   width: 100%;
   max-width: 360px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
@@ -558,13 +573,76 @@ label.ghost-btn.small { cursor: pointer; }
 .bg-tip { font-size: 13px; color: var(--fg-weak); }
 .bg-slider input[type="range"] { flex: 1; width: auto; padding: 0; }
 .bg-row input[type="file"] { display: none; }
+#bg-url { width: 100%; }   /* 继承 input 的 130px 会让这一长串占位文字被截断 */
 
+/* ---------- 平板 / 窄窗口：栏目宽度 ----------
+ * 侧栏按“用户设定值”与“视口”取小：窗口越窄挤得越狠，但不低于 220px。
+ * 不这么做的话 820px 窗口下主栏只剩 440px，表盘与时长输入组都要顶破边框 */
+@media (max-width: 1024px) {
+  #app-view { padding: 20px 20px 26px; }
+  #col-b { flex: 0 0 clamp(220px, 32vw, var(--side-w, 300px)); }
+}
+
+/* ---------- 手机 / 窄屏 ---------- */
 @media (max-width: 760px) {
-  #app-view { flex-direction: column; padding: 16px; min-height: calc(100vh - 70px); }
+  header {
+    padding: 14px 16px 0;
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+  h1 { font-size: 16px; letter-spacing: 4px; }
+  .header-right { gap: 12px 14px; }
+  #theme-picker { gap: 12px; }
+  .theme-dot { width: 26px; height: 26px; }   /* 颜色圆点手指也要点得到 */
+
+  /* 手机上强制单栏：flex 转列后 --side-w 会被当成“高度”，这里一律按内容排 */
+  #app-view {
+    flex-direction: column;
+    padding: 12px 12px calc(24px + env(safe-area-inset-bottom));
+    min-height: 0;                            /* 交给整页滚动，别用 100vh（手机地址栏会算错） */
+    gap: 14px;
+  }
   #app-view .col-resizer { display: none; }
-  #app-view .col { flex: 1 0 auto; }   /* 窄屏同样不得压缩 */
-  header { padding: 20px 20px 0; }
-  .big-time { font-size: 56px; }
-  .dial { width: min(240px, 100%); }   /* 高度由 aspect-ratio 跟着走，不再写死 */
-  .card { padding: 22px; }
+  #app-view .col { flex: 1 0 auto; gap: 14px; }   /* 窄屏同样不得压缩 */
+  #app-view.left { flex-direction: column; }      /* row-reverse 在单栏下无意义 */
+
+  /* 单栏时卡片只靠间距区分不够清楚：描一圈细边，面板边界一眼看得见 */
+  .card { padding: 20px 18px; border-radius: 18px; box-shadow: inset 0 0 0 1px var(--line); }
+  /* 登录框同样需要边界：手机上半屏只有它，不描边看着就是一片空白飘着几个输入框 */
+  .auth-view { min-height: 62vh; padding: 0 14px; }
+  .auth-card { padding: 24px 20px; box-shadow: inset 0 0 0 1px var(--line); }
+  .dial { width: min(280px, 100%); }              /* 高度由 aspect-ratio 跟着走 */
+  /* 主时间字号交给 .dial .big-time 的 cqw 缩放，这里不再写死像素（写了也会被那条更高优先级的规则盖掉）*/
+  #task-list { max-height: none; overflow-y: visible; }   /* 内嵌滚动手机上难用，让整页滚 */
+  .panel { margin-top: 20px; }
+  .today-strip { margin-top: 18px; }
+  .tab { padding: 8px 14px; }
+  .ctrl-btn, .ghost-btn { padding: 11px 20px; }
+  input, select { font-size: 16px; }              /* 低于 16px 时 iOS 聚焦会自动放大整页 */
+  #task-name { flex: 1 1 100%; }                  /* 任务名先占满一行，时长输入组另起一行 */
+  .modal { padding: 14px; }
+  .modal-box { padding: 20px 18px; }
+  .modal-actions { flex-wrap: wrap; row-gap: 10px; }
+  .bg-preview { height: 140px; }
+  .fit-group { flex-wrap: wrap; }
+  .edge-t, .edge-b { height: 22px; }              /* 手指拖拽命中区加宽（10px 按不准） */
+  .edge-l, .edge-r { width: 22px; }
+  .card .grip { width: 34px; height: 14px; }
+  .toast { bottom: calc(24px + env(safe-area-inset-bottom)); max-width: 92vw; }
+
+  /* 手机上三个布局模板没有区别（都是单栏），不要把选了没反应的按钮摆给用户看 */
+  #layout-modal .bg-btns { display: none; }
+  .layout-tip::after {
+    content: '（手机上是单栏，捏住边框上下换位即可）';
+    display: block;
+    margin-top: 6px;
+  }
+}
+
+/* 触屏没有 hover：提手常驻可见，否则用户不知道卡片能拖 */
+@media (hover: none) {
+  .card .grip { opacity: 0.5; }
+  .card:hover .grip { opacity: 0.5; }   /* 点完不“离开”，hover 态会一直粘在最后一张卡片上 */
+  .edge:hover { background: transparent; }
+  .theme-dot:hover { transform: none; } /* 按下去弹一下又不回位，看着像渲染错了 */
 }
