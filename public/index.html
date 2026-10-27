@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>时钟</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="bg-layer" class="hidden"><img id="bg-img" alt=""></div>
+  <header>
+    <h1>时钟</h1>
+    <div class="header-right">
+      <button id="btn-layout" class="link-btn">布局</button>
+      <button id="btn-bg" class="link-btn">背景</button>
+      <div id="theme-picker"></div>
+      <span id="user-box" class="hidden">
+        <span id="user-name"></span>
+        <button id="btn-logout" class="link-btn">退出</button>
+      </span>
+    </div>
+  </header>
+
+  <!-- 登录 / 注册 -->
+  <main id="auth-view" class="auth-view hidden">
+    <section class="auth-card">
+      <nav id="auth-tabs">
+        <button class="tab active" data-auth="login">登录</button>
+        <button class="tab" data-auth="register">注册</button>
+      </nav>
+      <input id="auth-user" type="text" placeholder="用户名" maxlength="20" autocomplete="username">
+      <input id="auth-pass" type="password" placeholder="密码" maxlength="64" autocomplete="current-password">
+      <button id="btn-auth" class="ctrl-btn solid">登录</button>
+      <div id="auth-msg" class="auth-msg"></div>
+    </section>
+  </main>
+
+  <!-- 主应用：面板可拖拽重排 -->
+  <main id="app-view" class="hidden">
+    <div class="col" id="col-a">
+      <section class="card display-card" id="panel-display" data-panel="display">
+        <nav id="tabs">
+          <button class="tab active" data-mode="clock">当前时间</button>
+          <button class="tab" data-mode="countdown">倒计时</button>
+          <button class="tab" data-mode="stopwatch">正计时</button>
+        </nav>
+
+        <div class="dial">
+          <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
+            <circle class="ring-bg" cx="100" cy="100" r="92"></circle>
+            <circle class="ring-fg" id="ring-fg" cx="100" cy="100" r="92"></circle>
+          </svg>
+          <div class="dial-inner">
+            <div id="big-time" class="big-time">00:00:00</div>
+            <div id="sub-time" class="sub-time"></div>
+          </div>
+        </div>
+
+        <div id="clock-panel" class="panel"></div>
+
+        <div id="timer-panel" class="panel hidden">
+          <div class="btn-row" id="timer-controls"></div>
+          <div class="new-task">
+            <input id="task-name" type="text" placeholder="任务名称" maxlength="20">
+            <div id="duration-inputs" class="dur-inputs hidden">
+              <input id="task-day" type="number" min="0" max="3650" placeholder="天">
+              <input id="task-hour" type="number" min="0" max="23" placeholder="时">
+              <input id="task-min" type="number" min="0" max="59" placeholder="分">
+              <input id="task-sec" type="number" min="0" max="59" placeholder="秒">
+            </div>
+            <select id="recurrence" class="hidden">
+              <option value="none">不循环</option>
+              <option value="daily">每日循环</option>
+              <option value="weekly">每周循环</option>
+              <option value="monthly">每月循环</option>
+              <option value="yearly">每年循环</option>
+            </select>
+            <button id="btn-create" class="ghost-btn">＋ 新建任务</button>
+          </div>
+        </div>
+
+        <div class="today-strip">
+          <div class="today-bar"><i id="today-fill"></i></div>
+          <span id="today-text" class="today-text"></span>
+        </div>
+      </section>
+    </div>
+
+    <div class="col-resizer" id="col-resizer" title="拖动调整列宽"><span></span></div>
+
+    <div class="col" id="col-b">
+      <section class="card task-card" id="panel-tasks" data-panel="tasks">
+        <h2>任务列表</h2>
+        <div id="task-list"></div>
+      </section>
+
+      <section class="card task-card friends-card" id="panel-friends" data-panel="friends">
+        <h2>好友</h2>
+        <div class="add-friend">
+          <input id="friend-name" type="text" placeholder="好友用户名" maxlength="20">
+          <button id="btn-add-friend" class="ghost-btn">＋ 添加</button>
+        </div>
+        <div id="friend-requests"></div>
+        <div id="friend-list"></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- 布局弹窗 -->
+  <div id="layout-modal" class="modal hidden">
+    <div class="modal-box">
+      <h3>面板布局</h3>
+      <p class="layout-tip">拖动面板：<strong>捏住卡片边框</strong>即可拖起，放到另一列或上下换位；<br>拖动两列之间的竖条可把另一列“挤窄”。</p>
+      <div class="bg-btns">
+        <span class="bg-tip">模板</span>
+        <div class="fit-group" id="layout-preset-group">
+          <button data-preset="classic" class="active">经典</button>
+          <button data-preset="left">侧栏居左</button>
+          <button data-preset="stack">单栏</button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-layout-reset" class="ghost-btn">恢复默认</button>
+        <button id="btn-layout-close" class="ctrl-btn solid">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 共享弹窗 -->
+  <div id="share-modal" class="modal hidden">
+    <div class="modal-box">
+      <h3>共享任务</h3>
+      <p id="share-task-name" class="share-task-name"></p>
+      <div id="share-friends" class="share-friends"></div>
+      <div class="modal-actions">
+        <button id="btn-share-close" class="ghost-btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通用确认弹窗 -->
+  <div id="confirm-modal" class="modal hidden">
+    <div class="modal-box small">
+      <p id="confirm-text" class="confirm-text"></p>
+      <div class="modal-actions">
+        <button id="btn-confirm-no" class="ghost-btn">取消</button>
+        <button id="btn-confirm-yes" class="ctrl-btn solid">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 背景设置弹窗 -->
+  <div id="bg-modal" class="modal hidden">
+    <div class="modal-box wide">
+      <h3>自定义背景</h3>
+      <div class="bg-preview" id="bg-preview">
+        <div class="bg-prev" id="bg-prev"><div class="bg-prev-scale" id="bg-prev-scale"><img id="bg-prev-img" alt=""></div></div>
+        <div class="bg-prev-empty" id="bg-prev-empty">上传图片或粘贴地址后<br>放大后可拖动或点“顶部/中部/底部”选取展示区域</div>
+      </div>
+      <div class="bg-row">
+        <div class="bg-btns">
+          <label class="ghost-btn small">上传本地图片<input type="file" id="bg-file" accept="image/*" hidden></label>
+          <div class="fit-group" id="bg-fit-group">
+            <button data-fit="cover" class="active">铺满</button>
+            <button data-fit="contain">完整</button>
+          </div>
+        </div>
+        <input id="bg-url" type="text" placeholder="或粘贴图片地址 https://... 回车应用">
+        <label class="bg-slider">缩放<input type="range" id="bg-zoom" min="100" max="400" value="100"></label>
+        <div class="bg-btns">
+          <span class="bg-tip">取景位置</span>
+          <div class="fit-group" id="bg-pos-group">
+            <button data-fy="0">顶部</button>
+            <button data-fy="0.5" class="active">中部</button>
+            <button data-fy="1">底部</button>
+          </div>
+        </div>
+        <label class="bg-slider">模糊虚化<input type="range" id="bg-blur" min="0" max="30" value="0"></label>
+        <label class="bg-slider">遮罩强度<input type="range" id="bg-dim" min="0" max="80" value="30"></label>
+        <div class="bg-btns">
+          <span class="bg-tip">文字颜色</span>
+          <div class="fit-group" id="fg-mode-group">
+            <button data-fg="auto" class="active">自动</button>
+            <button data-fg="dark">深色字</button>
+            <button data-fg="light">浅色字</button>
+          </div>
+        </div>
+        <label class="bg-slider">卡片浓度<input type="range" id="bg-card" min="30" max="95" value="72"></label>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-bg-center" class="ghost-btn small">居中复位</button>
+        <button id="btn-bg-clear" class="ghost-btn">清除背景</button>
+        <button id="btn-bg-close" class="ctrl-btn solid">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

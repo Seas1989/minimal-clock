@@ -1,0 +1,14 @@
+# 依赖
+node_modules/
+
+# 编辑器 / IDE
+.idea/
+.vscode/
+
+# 运行期数据（账号、任务、好友关系，含敏感信息，绝不入库）
+data/
+
+# 本机专用脚本与日志（含本地 Node 绝对路径 / 开机自启配置）
+scripts/
+*.log
+*.vbs
