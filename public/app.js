@@ -116,6 +116,8 @@ let tasks = []
 let friends = { friends: [], incoming: [], outgoing: [] }
 let mode = localStorage.getItem('mode') || 'clock' // clock | countdown | stopwatch
 let selectedId = null
+let challenges = [] // 同任务挑战：服务端已按进度排好序的视图
+let focusId = null  // 专注模式中那一个计时窗的任务 id
 let offset = 0     // 服务器时间与本地的偏差：serverNow = Date.now() + offset
 let titleFlash = '' // 完成提醒时临时标题
 const notified = new Set() // 已提醒过完成的任务 id
@@ -541,7 +543,9 @@ function logout() {
   localStorage.removeItem('token')
   tasks = []
   friends = { friends: [], incoming: [], outgoing: [] }
+  challenges = []
   selectedId = null
+  if (focusId) exitFocus()
   showView(false)
 }
 
@@ -551,7 +555,7 @@ async function enterApp(username) {
   setMode(mode, false)
   applyLayout() // 可见后重排一次，保证拖拽限位基于真实尺寸
   await syncTime()
-  await Promise.all([refresh(), loadFriends()])
+  await Promise.all([refresh(), loadFriends(), loadChallenges()])
   tickDisplay()
 }
 
@@ -569,8 +573,11 @@ async function refresh() {
     tasks = await api('/api/tasks')
   } catch { return }
   if (selectedId && !tasks.some((t) => t.id === selectedId)) selectedId = null
+  if (focusId && !tasks.some((t) => t.id === focusId)) exitFocus()
   renderTasks()
+  renderDock()
   renderTimerPanel()
+  if (focusId) renderFocus()
 }
 
 async function act(id, action) {
@@ -601,6 +608,8 @@ async function createTask() {
     $('task-name').value = ''
     selectedId = task.id
     toast(`已创建「${task.name}」`)
+    // 窗口坞还空着：新任务直接挂上去，省得用户再点一次
+    if (!dockTasks().length) await setWindow(task.id, true)
     await act(task.id, 'start')
   } catch (e) { toast(e.message) }
 }
@@ -618,8 +627,15 @@ async function deleteTask(id) {
 
 function selectTask(id) {
   if (mode === 'clock') return
-  selectedId = selectedId === id ? null : id
+  setSelection(selectedId === id ? null : id)
+}
+
+// 换选中任务后要刷新的四处（列表高亮 / 窗口坞 / 控制面板 / 大表盘）集中在这里，
+// 免得以后新增一处渲染就漏一处
+function setSelection(id) {
+  selectedId = id
   renderTasks()
+  renderDock()
   renderTimerPanel()
   tickDisplay()
 }
@@ -653,11 +669,11 @@ async function respondRequest(reqId, accept, name) {
 }
 
 async function unfriend(id, name) {
-  if (!await confirmAction(`解除与「${name}」的好友关系？相关共享任务将撤回。`)) return
+  if (!await confirmAction(`解除与「${name}」的好友关系？互相之间待处理的挑战邀请会作废。`)) return
   try {
     await api(`/api/friends/${id}`, { method: 'DELETE' })
     toast('已解除好友')
-    await Promise.all([loadFriends(), refresh()])
+    await Promise.all([loadFriends(), refresh(), loadChallenges()])
   } catch (e) { toast(e.message) }
 }
 
@@ -706,16 +722,87 @@ function miniBtn(label, onclick) {
   return b
 }
 
-/* ---------- 任务共享 ---------- */
+/* ---------- 同任务挑战：同一个目标、各自打卡、按进度排行 ---------- */
 
 let shareTaskId = null
+let challengeId = null
+const shareTargets = new Set()   // 发起弹窗里勾选的好友
+const challengePick = new Set()  // 详情弹窗里勾选的追加邀请对象
+
+async function loadChallenges() {
+  try {
+    challenges = await api('/api/challenges')
+  } catch { return }
+  renderChallengePanel()
+  if (challengeId) renderChallengeModal() // 弹窗开着时排行也跟着动
+}
+
+const challengeOf = (id) => challenges.find((c) => c.id === id) || null
+
+// 进度文案：有目标量就说“刷完几轮 + 本轮百分比”，纯计时型只能比累计时长
+function progText(m, ch) {
+  if (ch.duration > 0) {
+    const unit = { daily: '天', weekly: '周', monthly: '月', yearly: '年' }[ch.recurrence] || '轮'
+    return `已完成 ${m.cycles} ${unit} · 本轮 ${Math.round(m.pct * 100)}%`
+  }
+  return `累计 ${Math.floor(m.ms / 6e4)} 分钟`
+}
+
+const RANK_TAG = { running: '计时中', paused: '已暂停', stopped: '未开始', done: '已完成', none: '未绑定任务' }
+
+/* 面板：待我处理的邀请排最前（能接受也能拒绝），其次是我已参与的 */
+function renderChallengePanel() {
+  const box = $('challenge-list')
+  box.innerHTML = ''
+  const invites = challenges.filter((c) => !c.joined && c.myInvite && c.myInvite.status === 'pending')
+  const mine = challenges.filter((c) => c.joined)
+  if (!invites.length && !mine.length) {
+    box.innerHTML = '<div class="empty-tip">还没有挑战。在任务上点 ↗，把同一个目标发给好友</div>'
+    return
+  }
+  invites.forEach((c) => box.appendChild(challengeItem(c, true)))
+  if (invites.length && mine.length) box.appendChild(groupLabel('我参与的'))
+  mine.forEach((c) => box.appendChild(challengeItem(c, false)))
+}
+
+function challengeItem(c, isInvite) {
+  const row = document.createElement('div')
+  row.className = 'friend-item' + (isInvite ? ' req' : '')
+  const me = c.members.find((m) => m.isMe)
+  const rank = me ? c.members.indexOf(me) + 1 : 0
+  const top = document.createElement('span')
+  top.textContent = isInvite
+    ? `${c.ownerName} 邀你：${c.title}`
+    : `${c.title} · 第 ${rank}/${c.members.length} 名 · ${me ? progText(me, c) : ''}`
+  row.appendChild(top)
+  row.appendChild(miniBtn('查看', () => openChallenge(c.id)))
+  if (isInvite) {
+    row.appendChild(miniBtn('接受', () => respondChallenge(c.id, true)))
+    row.appendChild(miniBtn('拒绝', () => respondChallenge(c.id, false)))
+  } else if (me && me.taskId) {
+    row.appendChild(miniBtn('专注', () => enterFocus(me.taskId)))
+  }
+  return row
+}
+
+/* 发起：把任务作为共同目标发给好友（邀请制，对方可拒绝） */
 
 function openShare(taskId) {
-  shareTaskId = taskId
   const t = tasks.find((x) => x.id === taskId)
-  $('share-task-name').textContent = t ? t.name : ''
+  if (!t) return
+  shareTaskId = taskId
+  shareTargets.clear()
+  $('share-task-name').textContent = `把「${t.name}」当共同目标发给好友：各自计时、按进度排行，对方可以拒绝。`
+  // 倒计时自带目标量；正计时没有，要由发起人补一个“每轮目标时长”才能排行
+  $('share-goal-row').classList.toggle('hidden', t.type !== 'stopwatch')
+  $('share-goal').value = lsNum('challengeGoal', 30)
+  syncGoalText()
   renderShareModal()
   $('share-modal').classList.remove('hidden')
+}
+
+function syncGoalText() {
+  $('share-goal-text').textContent = `${Number($('share-goal').value)} 分钟/轮`
 }
 
 function closeShare() {
@@ -723,34 +810,239 @@ function closeShare() {
   $('share-modal').classList.add('hidden')
 }
 
+// 好友 chip 只是勾选，点「发出邀请」才真发出去（避免手滑一路共享出去）
 function renderShareModal() {
   const box = $('share-friends')
   box.innerHTML = ''
-  const t = tasks.find((x) => x.id === shareTaskId)
-  if (!t) return
   if (!friends.friends.length) {
     box.innerHTML = '<div class="empty-tip">还没有好友，先在右侧添加好友</div>'
     return
   }
   friends.friends.forEach((f) => {
-    const shared = (t.shareWith || []).includes(f.id)
+    const on = shareTargets.has(f.id)
     const chip = document.createElement('button')
-    chip.className = 'share-chip' + (shared ? ' on' : '')
-    chip.textContent = shared ? `✓ ${f.username}` : f.username
-    chip.onclick = async () => {
-      try {
-        if (shared) await api(`/api/tasks/${t.id}/unshare`, { method: 'POST', body: JSON.stringify({ from: f.id }) })
-        else await api(`/api/tasks/${t.id}/share`, { method: 'POST', body: JSON.stringify({ to: f.id }) })
-        await refresh()
-        renderShareModal()
-      } catch (e) { toast(e.message) }
+    chip.className = 'share-chip' + (on ? ' on' : '')
+    chip.textContent = on ? `✓ ${f.username}` : f.username
+    chip.onclick = () => {
+      if (on) shareTargets.delete(f.id)
+      else shareTargets.add(f.id)
+      renderShareModal()
     }
     box.appendChild(chip)
   })
+  const all = document.createElement('button')
+  const every = shareTargets.size === friends.friends.length
+  all.className = 'share-chip' + (every ? ' on' : '')
+  all.textContent = every ? '✓ 取消全选' : '全选'
+  all.onclick = () => {
+    shareTargets.clear()
+    if (!every) friends.friends.forEach((f) => shareTargets.add(f.id))
+    renderShareModal()
+  }
+  box.appendChild(all)
+}
+
+$('share-goal').addEventListener('input', () => {
+  syncGoalText()
+  localStorage.setItem('challengeGoal', $('share-goal').value)
+})
+
+$('btn-share-go').onclick = async () => {
+  const t = tasks.find((x) => x.id === shareTaskId)
+  if (!t) return
+  if (!shareTargets.size) return toast('至少选一位好友')
+  try {
+    const view = await api('/api/challenges', {
+      method: 'POST',
+      body: JSON.stringify({ taskId: t.id, to: [...shareTargets], duration: Number($('share-goal').value) * 6e4 }),
+    })
+    closeShare()
+    toast(`已向 ${view.pending.length} 人发出挑战邀请`)
+    await Promise.all([refresh(), loadChallenges()])
+    openChallenge(view.id)
+  } catch (e) { toast(e.message) }
+}
+
+/* 详情：按完成进度排行 + 点赞 */
+
+function openChallenge(id) {
+  challengeId = id
+  challengePick.clear()
+  renderChallengeModal()
+  $('challenge-modal').classList.remove('hidden')
+  loadChallenges() // 打开瞬间拉一次最新进度
+}
+
+function closeChallenge() {
+  challengeId = null
+  $('challenge-modal').classList.add('hidden')
+}
+
+function renderChallengeModal() {
+  const c = challengeOf(challengeId)
+  if (!c) { closeChallenge(); return }
+  $('challenge-title').textContent = c.title
+  $('challenge-meta').textContent = [
+    `${c.ownerName} 发起`,
+    `${c.members.length} 人参与`,
+    c.duration > 0
+      ? `每轮目标 ${Math.round(c.duration / 6e4)} 分钟${c.recurrence !== 'none' ? ` · ${REC_LABEL[c.recurrence]}循环` : ''}`
+      : '不限目标 · 比累计时长',
+  ].join(' · ')
+
+  const rank = $('challenge-rank')
+  rank.innerHTML = ''
+  const maxMs = Math.max(1, ...c.members.map((m) => m.ms))
+  c.members.forEach((m, i) => rank.appendChild(rankRow(c, m, i, maxMs)))
+
+  renderChallengeInvite(c)
+
+  const leave = $('btn-challenge-leave')
+  leave.classList.toggle('hidden', !c.joined)
+  leave.textContent = c.isOwner ? '关闭挑战' : '退出挑战'
+}
+
+function rankRow(c, m, i, maxMs) {
+  const row = document.createElement('div')
+  row.className = 'rank-row' + (m.isMe ? ' me' : '')
+
+  const no = document.createElement('span')
+  no.className = 'rank-no'
+  no.textContent = i + 1
+  row.appendChild(no)
+
+  const main = document.createElement('div')
+  main.className = 'rank-main'
+  const who = document.createElement('div')
+  who.className = 'rank-who'
+  who.textContent = m.username + (m.isMe ? '（我）' : '')
+  const tag = document.createElement('i')
+  tag.className = 'rank-tag'
+  tag.textContent = m.missing ? RANK_TAG.none : RANK_TAG[m.taskStatus] || ''
+  who.appendChild(tag)
+  const bar = document.createElement('div')
+  bar.className = 'rank-bar'
+  const fill = document.createElement('i')
+  fill.style.width = `${(Math.min(1, c.duration > 0 ? m.pct : m.ms / maxMs) * 100).toFixed(1)}%`
+  bar.appendChild(fill)
+  const text = document.createElement('div')
+  text.className = 'rank-text'
+  text.textContent = m.missing ? '还没建自己的任务' : progText(m, c)
+  main.appendChild(who)
+  main.appendChild(bar)
+  main.appendChild(text)
+  row.appendChild(main)
+
+  const like = document.createElement('button')
+  like.className = 'like-btn' + (m.likedByMe ? ' on' : '')
+  like.textContent = `♥ ${m.likes}`
+  like.disabled = m.isMe || !c.joined
+  like.title = m.isMe ? '不能给自己点赞' : c.joined ? '给 TA 鼓劲' : '加入后才能点赞'
+  like.onclick = () => likeUser(c.id, m.user)
+  row.appendChild(like)
+
+  // 点自己那一行直接进专注：看别人进度的同时自己这个窗不被干扰
+  if (m.isMe && m.taskId) row.onclick = () => enterFocus(m.taskId)
+  return row
+}
+
+// 底部操作区：被邀请时是“接受/拒绝”，发起人则是“追加邀请”
+function renderChallengeInvite(c) {
+  const box = $('challenge-invite')
+  box.innerHTML = ''
+  if (!c.joined && c.myInvite && c.myInvite.status === 'pending') {
+    const tip = document.createElement('div')
+    tip.className = 'empty-tip'
+    tip.textContent = `接受后会自动建一份同名任务给你计时，只排行、不共享数据。`
+    box.appendChild(tip)
+    const ok = document.createElement('button')
+    ok.className = 'ctrl-btn solid'
+    ok.textContent = '接受邀请'
+    ok.onclick = () => respondChallenge(c.id, true)
+    box.appendChild(ok)
+    const no = document.createElement('button')
+    no.className = 'ghost-btn'
+    no.textContent = '拒绝'
+    no.onclick = () => respondChallenge(c.id, false)
+    box.appendChild(no)
+    return
+  }
+  if (!c.isOwner) return
+  const rest = friends.friends.filter((f) => !c.members.some((m) => m.user === f.id))
+  if (!rest.length) return
+  const tip = document.createElement('div')
+  tip.className = 'bg-tip'
+  tip.textContent = '再邀请：'
+  box.appendChild(tip)
+  rest.forEach((f) => {
+    const waiting = c.pending.some((p) => p.user === f.id)
+    const on = challengePick.has(f.id)
+    const chip = document.createElement('button')
+    chip.className = 'share-chip' + (on ? ' on' : '') + (waiting ? ' dim' : '')
+    chip.textContent = waiting ? `${f.username}（待同意）` : on ? `✓ ${f.username}` : f.username
+    chip.onclick = () => {
+      if (waiting) return
+      if (on) challengePick.delete(f.id)
+      else challengePick.add(f.id)
+      renderChallengeModal()
+    }
+    box.appendChild(chip)
+  })
+  const go = document.createElement('button')
+  go.className = 'ghost-btn small'
+  go.textContent = '发出邀请'
+  go.onclick = async () => {
+    if (!challengePick.size) return toast('先勾选要邀请的好友')
+    try {
+      await api(`/api/challenges/${c.id}/invite`, { method: 'POST', body: JSON.stringify({ to: [...challengePick] }) })
+      challengePick.clear()
+      toast('已发出邀请')
+      await loadChallenges()
+    } catch (e) { toast(e.message) }
+  }
+  box.appendChild(go)
+}
+
+async function respondChallenge(id, accept) {
+  const c = challengeOf(id)
+  try {
+    await api(`/api/challenges/${id}/respond`, { method: 'POST', body: JSON.stringify({ accept }) })
+    toast(accept ? `已加入「${c ? c.title : ''}」，同款任务已建好` : '已拒绝这个邀请')
+    await Promise.all([refresh(), loadChallenges()])
+    if (!accept && challengeId === id) closeChallenge()
+  } catch (e) { toast(e.message) }
+}
+
+// 点赞接口直接返回最新视图，拼回去就行，不必整表重拉
+async function likeUser(id, user) {
+  try {
+    const view = await api(`/api/challenges/${id}/like`, { method: 'POST', body: JSON.stringify({ user }) })
+    challenges = challenges.map((c) => (c.id === view.id ? view : c))
+    renderChallengePanel()
+    if (challengeId === id) renderChallengeModal()
+  } catch (e) { toast(e.message) }
+}
+
+$('btn-challenge-leave').onclick = async () => {
+  const c = challengeOf(challengeId)
+  if (!c) return
+  const owner = c.isOwner
+  if (!await confirmAction(owner
+    ? `关闭挑战「${c.title}」？所有人的挑战绑定会解开，任务本身保留。`
+    : `退出挑战「${c.title}」？你的任务会保留，只是不再参与排行。`)) return
+  try {
+    if (owner) await api(`/api/challenges/${c.id}`, { method: 'DELETE' })
+    else await api(`/api/challenges/${c.id}/leave`, { method: 'POST' })
+    toast(owner ? '已关闭挑战' : '已退出挑战')
+    closeChallenge()
+    await Promise.all([refresh(), loadChallenges()])
+  } catch (e) { toast(e.message) }
 }
 
 $('btn-share-close').onclick = closeShare
 $('share-modal').addEventListener('click', (e) => { if (e.target.id === 'share-modal') closeShare() })
+$('btn-challenge-close').onclick = closeChallenge
+$('challenge-modal').addEventListener('click', (e) => { if (e.target.id === 'challenge-modal') closeChallenge() })
 
 /* ---------- 渲染：主显示区 + 进度环 ---------- */
 
@@ -766,7 +1058,6 @@ function updateRing(frac) {
 
 function renderTimerPanel() {
   const controls = $('timer-controls')
-  controls.innerHTML = ''
   if (mode === 'clock') {
     $('clock-panel').classList.remove('hidden')
     $('timer-panel').classList.add('hidden')
@@ -779,28 +1070,36 @@ function renderTimerPanel() {
   $('btn-create').textContent = mode === 'countdown' ? '＋ 新建倒计时' : '＋ 新建正计时'
 
   const t = selectedTask()
-  if (!t) return
-  if (t.shared) return // 好友共享的任务只读
+  if (!t) { controls.innerHTML = ''; return }
+  controlButtons(controls, t)
+}
 
-  const btn = (label, onclick, solid) => {
-    const b = document.createElement('button')
-    b.className = 'ctrl-btn' + (solid ? ' solid' : '')
-    b.textContent = label
-    b.onclick = onclick
-    controls.appendChild(b)
-  }
-  if (t.status === 'stopped') btn('开始', () => act(t.id, 'start'), true)
-  else if (t.status === 'running') btn('暂停', () => act(t.id, 'pause'), true)
-  else if (t.status === 'paused') btn('继续', () => act(t.id, 'resume'), true)
+// 控制按钮：主面板和专注层共用一份，避免两处逻辑漂移
+function controlBtn(box, label, onclick, solid) {
+  const b = document.createElement('button')
+  b.className = 'ctrl-btn' + (solid ? ' solid' : '')
+  b.textContent = label
+  b.onclick = onclick
+  box.appendChild(b)
+}
+
+function controlButtons(box, t) {
+  box.innerHTML = ''
+  if (t.status === 'stopped') controlBtn(box, '开始', () => act(t.id, 'start'), true)
+  else if (t.status === 'running') controlBtn(box, '暂停', () => act(t.id, 'pause'), true)
+  else if (t.status === 'paused') controlBtn(box, '继续', () => act(t.id, 'resume'), true)
   if (t.status !== 'stopped') {
-    btn('重置', () => act(t.id, 'reset'))
-    btn('删除', () => deleteTask(t.id))
+    controlBtn(box, '重置', () => act(t.id, 'reset'))
+    controlBtn(box, '完成', () => act(t.id, 'complete'))
+    controlBtn(box, '删除', () => deleteTask(t.id))
   }
 }
 
 function tickDisplay() {
   const now = new Date(serverNow())
   updateToday(now)
+  tickWindows()
+  tickFocus()
   if (mode === 'clock') {
     bigTime.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
     subTime.textContent = `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 ${now.getDate()} 日  ${WEEK[now.getDay()]}`
@@ -818,7 +1117,7 @@ function tickDisplay() {
   }
   const st = taskState(t)
   bigTime.textContent = st.text
-  subTime.textContent = t.shared ? `${t.name} · 来自 ${t.sharedBy}` : `${t.name} · ${st.sub}`
+  subTime.textContent = `${t.name} · ${st.sub}`
   updateRing(st.frac)
   setTitle(st.text)
 }
@@ -841,7 +1140,7 @@ function updateToday(now) {
 // 完成检测：倒计时归零时提醒一次
 function checkCompletion() {
   tasks.forEach((t) => {
-    if (t.type !== 'countdown' || t.shared) return
+    if (t.type !== 'countdown') return
     if (t.recurrence && t.recurrence !== 'none') return
     if (t.status !== 'running') { notified.delete(t.id); return }
     const remain = t.duration - liveElapsed(t)
@@ -866,17 +1165,7 @@ function renderTasks() {
     return
   }
   const sortFn = (a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (a.createdAt - b.createdAt)
-  const own = tasks.filter((t) => !t.shared).sort(sortFn)
-  const sharedList = tasks.filter((t) => t.shared).sort(sortFn)
-
-  if (sharedList.length) {
-    if (own.length) taskList.appendChild(groupLabel('我的任务'))
-    own.forEach((t) => taskList.appendChild(taskItem(t)))
-    taskList.appendChild(groupLabel('好友共享'))
-    sharedList.forEach((t) => taskList.appendChild(taskItem(t)))
-  } else {
-    own.forEach((t) => taskList.appendChild(taskItem(t)))
-  }
+  tasks.slice().sort(sortFn).forEach((t) => taskList.appendChild(taskItem(t)))
 }
 
 function groupLabel(text) {
@@ -888,7 +1177,7 @@ function groupLabel(text) {
 
 function taskItem(t) {
   const div = document.createElement('div')
-  div.className = 'task-item' + (t.id === selectedId ? ' selected' : '') + (t.shared ? ' shared' : '')
+  div.className = 'task-item' + (t.id === selectedId ? ' selected' : '') + (t.window ? ' win' : '')
 
   const top = document.createElement('div')
   top.className = 'task-top'
@@ -902,38 +1191,40 @@ function taskItem(t) {
 
   const actions = document.createElement('div')
   actions.className = 'task-actions'
-  if (t.shared) {
-    const tag = document.createElement('span')
-    tag.className = 'shared-tag'
-    tag.textContent = `@${t.sharedBy}`
-    actions.appendChild(tag)
-  } else {
-    const isRecurring = t.recurrence && t.recurrence !== 'none'
-    if (t.status !== 'done' || isRecurring) {
-      const play = document.createElement('button')
-      play.className = 'icon-btn'
-      play.textContent = STATUS_ICON[t.status] || '⏸'
-      play.title = t.status === 'running' ? '暂停' : '开始'
-      play.onclick = (e) => {
-        e.stopPropagation()
-        act(t.id, t.status === 'running' ? 'pause' : t.status === 'paused' ? 'resume' : 'start')
-      }
-      actions.appendChild(play)
+  const isRecurring = t.recurrence && t.recurrence !== 'none'
+  if (t.status !== 'done' || isRecurring) {
+    const play = document.createElement('button')
+    play.className = 'icon-btn'
+    play.textContent = STATUS_ICON[t.status] || '⏸'
+    play.title = t.status === 'running' ? '暂停' : '开始'
+    play.onclick = (e) => {
+      e.stopPropagation()
+      act(t.id, t.status === 'running' ? 'pause' : t.status === 'paused' ? 'resume' : 'start')
     }
-    const share = document.createElement('button')
-    share.className = 'icon-btn'
-    share.textContent = '↗'
-    share.title = (t.shareWith && t.shareWith.length) ? `已共享给 ${t.shareWith.length} 人` : '共享给好友'
-    share.onclick = (e) => { e.stopPropagation(); openShare(t.id) }
-    actions.appendChild(share)
-
-    const del = document.createElement('button')
-    del.className = 'icon-btn'
-    del.textContent = '✕'
-    del.title = '删除'
-    del.onclick = (e) => { e.stopPropagation(); deleteTask(t.id) }
-    actions.appendChild(del)
+    actions.appendChild(play)
   }
+
+  const win = document.createElement('button')
+  win.className = 'icon-btn' + (t.window ? ' on' : '')
+  win.textContent = '▢'
+  win.title = t.window ? '从窗口坞收起（后台继续计时）' : '挂到窗口坞：和别的任务同时计时'
+  win.onclick = (e) => { e.stopPropagation(); toggleWindow(t.id) }
+  actions.appendChild(win)
+
+  const share = document.createElement('button')
+  share.className = 'icon-btn'
+  share.textContent = t.challenge ? '⚑' : '↗'
+  share.title = t.challenge ? '查看同任务挑战' : '发起同任务挑战'
+  share.onclick = (e) => { e.stopPropagation(); t.challenge ? openChallenge(t.challenge) : openShare(t.id) }
+  actions.appendChild(share)
+
+  const del = document.createElement('button')
+  del.className = 'icon-btn'
+  del.textContent = '✕'
+  del.title = '删除'
+  del.onclick = (e) => { e.stopPropagation(); deleteTask(t.id) }
+  actions.appendChild(del)
+
   top.appendChild(actions)
 
   const time = document.createElement('div')
@@ -952,6 +1243,125 @@ function tickTaskTimes() {
     if (el) el.textContent = `${t.type === 'countdown' ? '⏳' : '⏱'} ${taskState(t).text}`
   })
 }
+
+/* ---------- 计时窗口坞：同屏多开，点窗切换、× 收起（后台继续跑） ---------- */
+
+const dockTasks = () => tasks.filter((t) => t.window)
+const focusTask = () => tasks.find((t) => t.id === focusId) || null
+
+async function setWindow(id, open) {
+  await api(`/api/tasks/${id}/window`, { method: 'POST', body: JSON.stringify({ open }) })
+  const t = tasks.find((x) => x.id === id)
+  if (t) t.window = open
+  renderDock()
+  renderTasks()
+}
+
+async function toggleWindow(id) {
+  const t = tasks.find((x) => x.id === id)
+  if (!t) return
+  try {
+    await setWindow(id, !t.window)
+    // 挂上窗口就直接切到它（所见即所得）；收起时如果正显示着就回到“没选中”
+    if (t.window) pickWindow(id)
+    else if (selectedId === id) setSelection(null)
+  } catch (e) { toast(e.message) }
+}
+
+// 点窗口 = 决定当前界面走哪个计时；类型不同得先切到对应标签页，否则大表盘不显示它
+function pickWindow(id) {
+  const t = tasks.find((x) => x.id === id)
+  if (!t) return
+  if (mode !== t.type) setMode(t.type)
+  setSelection(id)
+}
+
+function renderDock() {
+  const box = $('dock')
+  const list = dockTasks()
+  box.innerHTML = ''
+  box.classList.toggle('hidden', !list.length)
+  list.forEach((t) => {
+    const w = document.createElement('div')
+    w.className = 'twin' + (t.id === selectedId ? ' active' : '') + (t.status === 'running' ? ' live' : '')
+
+    const head = document.createElement('div')
+    head.className = 'twin-head'
+    const name = document.createElement('span')
+    name.className = 'twin-name'
+    name.textContent = t.name
+    head.appendChild(name)
+
+    const fs = document.createElement('button')
+    fs.className = 'twin-btn'
+    fs.textContent = '⤢'
+    fs.title = '专注这个窗口（其余全部雾化）'
+    fs.onclick = (e) => { e.stopPropagation(); enterFocus(t.id) }
+    head.appendChild(fs)
+
+    const cl = document.createElement('button')
+    cl.className = 'twin-btn close'
+    cl.textContent = '✕'
+    cl.title = '收起窗口（后台继续计时）'
+    cl.onclick = (e) => { e.stopPropagation(); toggleWindow(t.id) }
+    head.appendChild(cl)
+
+    const time = document.createElement('div')
+    time.className = 'twin-time'
+    time.id = `dw-${t.id}`
+
+    w.appendChild(head)
+    w.appendChild(time)
+    w.onclick = () => pickWindow(t.id)
+    box.appendChild(w)
+  })
+  tickWindows()
+}
+
+// 窗口坞和专注层不属于“当前选中的那个任务”：没被选中的窗也要一秒一秒跳
+function tickWindows() {
+  dockTasks().forEach((t) => {
+    const el = $(`dw-${t.id}`)
+    if (el) el.textContent = taskState(t).text
+  })
+}
+
+/* ---------- 专注模式：整页雾化，只留下这一个计时窗 ---------- */
+
+function enterFocus(id) {
+  const t = tasks.find((x) => x.id === id)
+  if (!t) return
+  focusId = id
+  if (mode !== t.type) setMode(t.type)
+  setSelection(id)
+  $('focus').classList.remove('hidden')
+  renderFocus()
+}
+
+function exitFocus() {
+  focusId = null
+  $('focus').classList.add('hidden')
+}
+
+function renderFocus() {
+  const t = focusTask()
+  if (!t) { exitFocus(); return }
+  $('focus-name').textContent = t.name
+  controlButtons($('focus-controls'), t)
+  tickFocus()
+}
+
+function tickFocus() {
+  if (!focusId) return
+  const t = focusTask()
+  if (!t) return
+  const st = taskState(t)
+  $('focus-time').textContent = st.text
+  $('focus-sub').textContent = `${st.sub}${t.challenge ? ' · 可看挑战排行' : ''}`
+  $('focus-fill').style.width = `${(clamp(st.frac, 0, 1) * 100).toFixed(2)}%`
+}
+
+$('btn-focus-exit').onclick = exitFocus
 
 /* ---------- 标签页 ---------- */
 
@@ -978,26 +1388,41 @@ $('friend-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') add
 document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase()
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return
-  if (e.key === 'Escape') { closeShare(); closeConfirm(false); return }
+  if (e.key === 'Escape') {
+    // 一层层退出：确认框 > 专注 > 挑战详情 > 发起挑战弹窗，不能一上来就把专注关掉
+    if (!$('confirm-modal').classList.contains('hidden')) { closeConfirm(false); return }
+    if (focusId) { exitFocus(); return }
+    if (!$('challenge-modal').classList.contains('hidden')) { closeChallenge(); return }
+    closeShare()
+    return
+  }
   if (e.code === 'Space' && token && mode !== 'clock') {
     e.preventDefault()
     const t = selectedTask()
-    if (t && !t.shared) act(t.id, t.status === 'running' ? 'pause' : t.status === 'paused' ? 'resume' : 'start')
+    if (t) act(t.id, t.status === 'running' ? 'pause' : t.status === 'paused' ? 'resume' : 'start')
   }
 })
 
 /* ---------- 面板布局：抽边框拖拽重排 + 果冻/撕纸动画 ---------- */
 
-const PANELS = ['display', 'tasks', 'friends']
-const DEFAULT_LAYOUT = { mode: 'classic', a: ['display'], b: ['tasks', 'friends'], sideW: 300 }
+const PANELS = ['display', 'tasks', 'friends', 'challenges']
+const DEFAULT_LAYOUT = { mode: 'classic', a: ['display'], b: ['tasks', 'friends', 'challenges'], sideW: 300 }
 
 function loadLayout() {
   let l = null
   try { l = JSON.parse(localStorage.getItem('layoutV2')) } catch { /* 数据坏了就用默认 */ }
   if (!l || !Array.isArray(l.a) || !Array.isArray(l.b)) return { ...DEFAULT_LAYOUT }
-  const all = [...l.a, ...l.b]
-  if (all.length !== PANELS.length || PANELS.some((p) => !all.includes(p))) return { ...DEFAULT_LAYOUT }
-  return { mode: ['classic', 'left', 'stack'].includes(l.mode) ? l.mode : 'classic', a: l.a, b: l.b, sideW: Number(l.sideW) || DEFAULT_LAYOUT.sideW }
+  const clean = (arr) => {
+    const out = []
+    arr.forEach((p) => { if (PANELS.includes(p) && !out.includes(p)) out.push(p) })
+    return out
+  }
+  const a = clean(l.a)
+  const b = clean(l.b)
+  // 旧存档里没有新面板（比如 challenges）：追到最后一栏，而不是把用户排好的顺序整体重置
+  PANELS.forEach((p) => { if (!a.includes(p) && !b.includes(p)) b.push(p) })
+  if (!a.length) a.push('display')
+  return { mode: ['classic', 'left', 'stack'].includes(l.mode) ? l.mode : 'classic', a, b, sideW: Number(l.sideW) || DEFAULT_LAYOUT.sideW }
 }
 
 let layout = loadLayout()
@@ -1348,8 +1773,8 @@ $('layout-modal').addEventListener('click', (e) => { if (e.target.id === 'layout
 document.querySelectorAll('#layout-preset-group button').forEach((btn) => {
   btn.onclick = () => {
     layout.mode = btn.dataset.preset
-    if (layout.mode === 'stack') { layout.a = ['display']; layout.b = ['tasks', 'friends'] }
-    else if (layout.mode === 'left') { layout.a = ['display']; layout.b = ['tasks', 'friends'] }
+    if (layout.mode === 'stack') { layout.a = ['display']; layout.b = ['tasks', 'friends', 'challenges'] }
+    else if (layout.mode === 'left') { layout.a = ['display']; layout.b = ['tasks', 'friends', 'challenges'] }
     saveLayout(); applyLayout(); toast(`已切换为${btn.textContent}布局`)
   }
 })
@@ -1372,7 +1797,7 @@ setInterval(() => {
   if (token) { tickDisplay(); tickTaskTimes(); checkCompletion() }
 }, 250)
 
-setInterval(() => { if (token) { refresh(); loadFriends() } }, 5000) // 定期与后端同步
+setInterval(() => { if (token) { refresh(); loadFriends(); loadChallenges() } }, 5000) // 定期与后端同步
 setInterval(syncTime, 60000)
 
 /* ---------- 启动：校验登录态 ---------- */

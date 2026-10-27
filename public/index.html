@@ -45,6 +45,9 @@
           <button class="tab" data-mode="stopwatch">正计时</button>
         </nav>
 
+        <!-- 计时窗口坞：同时挂多个正在计时的任务，点窗切换、× 收起（后台继续跑） -->
+        <div id="dock" class="dock hidden"></div>
+
         <div class="dial">
           <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
             <circle class="ring-bg" cx="100" cy="100" r="92"></circle>
@@ -103,6 +106,11 @@
         <div id="friend-requests"></div>
         <div id="friend-list"></div>
       </section>
+
+      <section class="card challenge-card" id="panel-challenges" data-panel="challenges">
+        <h2>同任务挑战</h2>
+        <div id="challenge-list"></div>
+      </section>
     </div>
   </main>
 
@@ -126,15 +134,43 @@
     </div>
   </div>
 
-  <!-- 共享弹窗 -->
+  <!-- 发起挑战：同一个目标发给好友，各自打卡互不干扰 -->
   <div id="share-modal" class="modal hidden">
     <div class="modal-box">
-      <h3>共享任务</h3>
+      <h3>发起同任务挑战</h3>
       <p id="share-task-name" class="share-task-name"></p>
+      <label class="bg-slider" id="share-goal-row">每轮目标<input type="range" id="share-goal" min="5" max="600" step="5" value="30"><span id="share-goal-text" class="bg-tip"></span></label>
       <div id="share-friends" class="share-friends"></div>
       <div class="modal-actions">
         <button id="btn-share-close" class="ghost-btn">关闭</button>
+        <button id="btn-share-go" class="ctrl-btn solid">发出邀请</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 挑战详情：按完成进度排行，可给成员点赞 -->
+  <div id="challenge-modal" class="modal hidden">
+    <div class="modal-box wide">
+      <h3 id="challenge-title">挑战</h3>
+      <p id="challenge-meta" class="share-task-name"></p>
+      <div id="challenge-rank" class="rank-list"></div>
+      <div id="challenge-invite" class="share-friends"></div>
+      <div class="modal-actions">
+        <button id="btn-challenge-leave" class="ghost-btn">退出</button>
+        <button id="btn-challenge-close" class="ctrl-btn solid">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 专注模式：整页雾化，只留下当前这个计时窗 -->
+  <div id="focus" class="focus hidden">
+    <div class="focus-inner">
+      <div id="focus-name" class="focus-name"></div>
+      <div id="focus-time" class="focus-time">00:00</div>
+      <div id="focus-sub" class="focus-sub"></div>
+      <div class="focus-bar"><i id="focus-fill"></i></div>
+      <div class="btn-row" id="focus-controls"></div>
+      <button id="btn-focus-exit" class="ghost-btn small">退出专注</button>
     </div>
   </div>
 

@@ -378,10 +378,133 @@ select {
 .friend-item:last-child { border-bottom: none; }
 .friend-item.req { color: var(--fg-weak); font-size: 14px; }
 
-/* ---------- 共享任务（只读） ---------- */
+/* ---------- 计时窗口坞：多个计时同屏挂着 ---------- */
 
-.task-item.shared .task-name { color: var(--fg-weak); }
-.shared-tag { font-size: 12px; color: var(--fg-weak); }
+.task-item.win .task-name::before { content: '▢ '; color: var(--fg-weak); } /* 已挂到窗口坞的任务做个记号 */
+.icon-btn.on { color: var(--fg); text-decoration: underline; }
+
+.dock {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+.twin {
+  flex: 0 1 132px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 7px 9px 8px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  background: var(--card);
+}
+.twin:hover { border-color: var(--fg-weak); }
+.twin.active { border-color: var(--fg); box-shadow: inset 0 0 0 1px var(--fg); } /* 当前大表盘显示的就是它 */
+.twin.live .twin-time { color: var(--fg); }
+.twin-head { display: flex; align-items: center; gap: 4px; }
+.twin-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--fg-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.twin-time { font-size: 16px; letter-spacing: 0.5px; margin-top: 2px; color: var(--fg-weak); font-variant-numeric: tabular-nums; }
+.twin-btn {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-weak);
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.twin-btn:hover { color: var(--fg); background: var(--line); }
+
+/* ---------- 专注模式：整页雾化，只看这一个窗 ---------- */
+
+.focus {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  padding: 20px;
+  /* 背后整页虚化：剩下的这一个窗才是清的，模拟“屏幕上只有这个窗口”的专注感。
+   * 底色用主题色掺透明而不是抹黑，否则浅色主题下白底配深色字会直接看不见 */
+  backdrop-filter: blur(22px) saturate(0.75);
+  -webkit-backdrop-filter: blur(22px) saturate(0.75);
+  background: transparent; /* 不支持 color-mix 的浏览器：只靠模糊，文字对比度不变 */
+  background: color-mix(in srgb, var(--bg) 76%, transparent);
+}
+.focus-inner {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  max-width: 520px;
+  width: 100%;
+}
+.focus-name { font-size: 15px; letter-spacing: 3px; color: var(--fg-weak); }
+.focus-time { font-size: clamp(44px, 15vw, 104px); line-height: 1.05; font-variant-numeric: tabular-nums; }
+.focus-sub { font-size: 13px; color: var(--fg-weak); }
+.focus-bar {
+  width: 100%;
+  max-width: 320px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.focus-bar > i { display: block; height: 100%; width: 0; background: var(--fg); transition: width 0.25s linear; }
+
+/* ---------- 同任务挑战 ---------- */
+
+#challenge-modal {
+  /* 点进申请或排行时其余内容雾化：和专注层一个路子，只是模糊得轻一点 */
+  backdrop-filter: blur(12px) saturate(0.8);
+  -webkit-backdrop-filter: blur(12px) saturate(0.8);
+}
+.rank-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.rank-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.rank-row:last-child { border-bottom: none; }
+.rank-row.me { box-shadow: inset 0 0 0 1px var(--line); border-radius: 10px; padding-left: 8px; padding-right: 8px; background: var(--card); }
+.rank-no { flex: 0 0 18px; text-align: center; font-size: 13px; color: var(--fg-weak); }
+.rank-main { flex: 1; min-width: 0; }
+.rank-who { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-tag { font-style: normal; font-size: 12px; color: var(--fg-weak); margin-left: 6px; }
+.rank-bar { height: 5px; border-radius: 999px; background: var(--line); overflow: hidden; margin: 5px 0 4px; }
+.rank-bar > i { display: block; height: 100%; background: var(--fg); border-radius: 999px; transition: width 0.3s; }
+.rank-text { font-size: 12px; color: var(--fg-weak); }
+.like-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-weak);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.like-btn:hover:not(:disabled) { border-color: var(--fg); color: var(--fg); }
+.like-btn.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.like-btn:disabled { opacity: 0.4; cursor: default; }
+.share-chip.dim { opacity: 0.45; }
+.share-friends:empty { min-height: 0; }
+#share-goal-row { margin-bottom: 12px; }
 
 /* ---------- 共享弹窗 ---------- */
 
@@ -630,6 +753,12 @@ label.ghost-btn.small { cursor: pointer; }
   .card .grip { width: 34px; height: 14px; }
   .toast { bottom: calc(24px + env(safe-area-inset-bottom)); max-width: 92vw; }
 
+  /* 窗口坞：手机上按半排铺开，⤢ / ✕ 拇指才点得到；专注层按钮多，允许换行 */
+  .twin { flex: 1 1 calc(50% - 4px); padding: 9px 10px; }
+  .twin-btn { padding: 6px; font-size: 13px; }
+  .focus { padding: 16px; }   /* 专注层里的按钮多，.btn-row 本来就会换行 */
+  .rank-row { gap: 8px; }
+
   /* 手机上三个布局模板没有区别（都是单栏），不要把选了没反应的按钮摆给用户看 */
   #layout-modal .bg-btns { display: none; }
   .layout-tip::after {
@@ -645,4 +774,6 @@ label.ghost-btn.small { cursor: pointer; }
   .card:hover .grip { opacity: 0.5; }   /* 点完不“离开”，hover 态会一直粘在最后一张卡片上 */
   .edge:hover { background: transparent; }
   .theme-dot:hover { transform: none; } /* 按下去弹一下又不回位，看着像渲染错了 */
+  .twin:hover { border-color: var(--line); }   /* 刚点过的那个窗不该一直亮着边（选中态由 .twin.active 负责） */
+  .like-btn:hover:not(:disabled) { border-color: var(--line); color: var(--fg-weak); }
 }

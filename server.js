@@ -3,6 +3,7 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const { Store } = require('./lib/store')
+const { CYCLE, challengeView } = require('./lib/challenges')
 
 const PORT = process.env.PORT || 3000
 const PUBLIC_DIR = path.join(__dirname, 'public')
@@ -11,16 +12,10 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data')
 const DATA_FILE = path.join(DATA_DIR, 'tasks.json')
 const USERS_FILE = path.join(DATA_DIR, 'users.json')
 const FRIENDS_FILE = path.join(DATA_DIR, 'friends.json')
+const CHALLENGES_FILE = path.join(DATA_DIR, 'challenges.json')
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json')
 
 fs.mkdirSync(DATA_DIR, { recursive: true })
-
-// 循环周期（毫秒）
-const CYCLE = {
-  daily: 864e5,
-  weekly: 7 * 864e5,
-  monthly: 30 * 864e5,
-  yearly: 365 * 864e5,
-}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -46,13 +41,23 @@ const usersStore = new Store(USERS_FILE, {
 })
 const tasksStore = new Store(DATA_FILE)
 const friendsStore = new Store(FRIENDS_FILE)
+// 挑战记录：成员列表与点赞必须成对存在，缺 members 的残记录直接不进内存
+const challengesStore = new Store(CHALLENGES_FILE, {
+  validate: (c) => c && c.id && c.owner && Array.isArray(c.members),
+})
+// 全局服务端设置（目前只有网易云 cookie），只存 data/ 不入库
+const settingsStore = new Store(SETTINGS_FILE)
 
 const loadUsers = () => usersStore.data
 const loadTasks = () => tasksStore.data
 const loadFriends = () => friendsStore.data
+const loadChallenges = () => challengesStore.data
+const loadSettings = () => settingsStore.data
 const saveUsers = () => usersStore.save()
 const saveTasks = () => tasksStore.save()
 const saveFriends = () => friendsStore.save()
+const saveChallenges = () => challengesStore.save()
+const saveSettings = () => settingsStore.save()
 
 // 已接受好友关系的对方用户 id
 function friendIdsOf(userId, rels = loadFriends()) {
@@ -248,6 +253,15 @@ async function handleAPI(req, res, pathname) {
         }
       })
       if (changed) saveTasks(tasks)
+      // 解除好友后，两人在挑战里互相的待处理邀请一并作废（已加入的历史进度保留）
+      const challenges = loadChallenges()
+      let chChanged = false
+      challenges.forEach((c) => {
+        const before = (c.invites || []).length
+        c.invites = (c.invites || []).filter((i) => !((i.user === fid || i.user === user.id) && i.status === 'pending'))
+        if (c.invites.length !== before) chChanged = true
+      })
+      if (chChanged) saveChallenges()
       return sendJSON(res, 200, { ok: true })
     }
   }
@@ -257,12 +271,9 @@ async function handleAPI(req, res, pathname) {
   const nameOf = (id) => (users.find((u) => u.id === id) || {}).username || '未知用户'
   const myTasks = tasks.filter((t) => t.owner === user.id)
 
-  // GET /api/tasks —— 我的任务 + 好友共享给我的任务（共享任务只读）
+  // GET /api/tasks —— 只看自己的任务（同任务挑战走 /api/challenges，不再把别人的任务对象搬过来）
   if (req.method === 'GET' && route === 'tasks' && seg.length === 2) {
-    const shared = tasks
-      .filter((t) => t.owner !== user.id && Array.isArray(t.shareWith) && t.shareWith.includes(user.id))
-      .map((t) => ({ ...t, shared: true, sharedBy: nameOf(t.owner) }))
-    return sendJSON(res, 200, [...myTasks, ...shared])
+    return sendJSON(res, 200, myTasks)
   }
 
   // POST /api/tasks —— 新建任务
@@ -280,7 +291,7 @@ async function handleAPI(req, res, pathname) {
       type,
       duration,     // 倒计时总时长（毫秒）
       recurrence,   // none | daily | weekly | monthly | yearly
-      shareWith: [], // 共享给的好友 userId 列表
+      challenge: null, // 所属挑战 id（由发起/接受挑战写入）
       status: 'stopped',
       elapsedBase: 0,
       startedAt: null,
@@ -338,35 +349,193 @@ async function handleAPI(req, res, pathname) {
     return sendJSON(res, 200, task)
   }
 
-  // POST /api/tasks/:id/share  { to: friendUserId | 'all' } —— 共享任务给好友
-  if (req.method === 'POST' && route === 'tasks' && seg[3] === 'share') {
-    const body = await readBody(req)
-    const task = tasks.find((t) => t.id === seg[2] && t.owner === user.id)
-    if (!task) return sendJSON(res, 404, { error: '任务不存在' })
-    const friends = friendIdsOf(user.id)
-    if (!friends.length) return sendJSON(res, 400, { error: '还没有好友，先加好友再共享' })
-    const targets = body.to === 'all' ? friends : [String(body.to)].filter((x) => friends.includes(x))
-    if (!targets.length) return sendJSON(res, 400, { error: '只能共享给好友' })
-    task.shareWith = Array.from(new Set([...(task.shareWith || []), ...targets]))
-    saveTasks(tasks)
-    return sendJSON(res, 200, task)
-  }
-
-  // POST /api/tasks/:id/unshare  { from: friendUserId | 'all' } —— 撤回共享
-  if (req.method === 'POST' && route === 'tasks' && seg[3] === 'unshare') {
-    const body = await readBody(req)
-    const task = tasks.find((t) => t.id === seg[2] && t.owner === user.id)
-    if (!task) return sendJSON(res, 404, { error: '任务不存在' })
-    task.shareWith = body.from === 'all' ? [] : (task.shareWith || []).filter((x) => x !== String(body.from))
-    saveTasks(tasks)
-    return sendJSON(res, 200, task)
-  }
-
   // DELETE /api/tasks/:id
   if (req.method === 'DELETE' && route === 'tasks' && seg.length === 3) {
     const idx = tasks.findIndex((t) => t.id === seg[2] && t.owner === user.id)
     if (idx === -1) return sendJSON(res, 404, { error: '任务不存在' })
+    // 挑掉任务后不动挑战：成员身份与历史进度还要参与排行，前端会显示成“未绑定任务”
     tasks.splice(idx, 1)
+    saveTasks(tasks)
+    return sendJSON(res, 200, { ok: true })
+  }
+
+  // POST /api/tasks/:id/window  { open: true|false } —— 记录这个任务的计时窗口是否挂在主界面窗口坞上
+  if (req.method === 'POST' && route === 'tasks' && seg[3] === 'window') {
+    const body = await readBody(req)
+    const task = tasks.find((t) => t.id === seg[2] && t.owner === user.id)
+    if (!task) return sendJSON(res, 404, { error: '任务不存在' })
+    task.window = !!body.open
+    saveTasks(tasks)
+    return sendJSON(res, 200, task)
+  }
+
+  /* ----- 同任务挑战：同一个目标，各自计时，按进度排行 + 点赞 ----- */
+
+  const challenges = loadChallenges()
+  const findChallenge = () => challenges.find((c) => c.id === seg[2])
+  // 邀请名单：'all' = 全好友；也接受 id 数组（前端多选）；只认好友，并排除已在成员里的人
+  function inviteList(body, ch) {
+    const friends = friendIdsOf(user.id)
+    if (!friends.length) throw new Error('还没有好友，先加好友再发起挑战')
+    const picked = body.to === 'all' ? friends : Array.isArray(body.to) ? body.to.map(String) : [String(body.to)]
+    const have = new Set([...(ch ? ch.members : []), ...(ch ? ch.invites || [] : []).filter((i) => i.status !== 'rejected').map((i) => i.user)])
+    const targets = Array.from(new Set(picked)).filter((x) => friends.includes(x) && !have.has(x))
+    if (!targets.length) throw new Error('只能邀请还没加入的好友')
+    return targets
+  }
+
+  // GET /api/challenges —— 我参与的 + 待我处理的邀请
+  if (req.method === 'GET' && route === 'challenges' && seg.length === 2) {
+    const mine = challenges.filter(
+      (c) => c.members.includes(user.id) || (c.invites || []).some((i) => i.user === user.id && i.status === 'pending')
+    )
+    return sendJSON(res, 200, mine.map((c) => challengeView(c, tasks, nameOf, user.id)))
+  }
+
+  // POST /api/challenges  { taskId, to: friendId | 'all', title?, duration? } —— 由我的任务发起挑战
+  if (req.method === 'POST' && route === 'challenges' && seg.length === 2) {
+    const body = await readBody(req)
+    const src = tasks.find((t) => t.id === body.taskId && t.owner === user.id)
+    if (!src) return sendJSON(res, 404, { error: '任务不存在' })
+    if (src.challenge) return sendJSON(res, 409, { error: '这个任务已经在挑战里了' })
+    let targets
+    try {
+      targets = inviteList(body, null)
+    } catch (e) {
+      return sendJSON(res, 400, { error: e.message })
+    }
+    const now = Date.now()
+    const ch = {
+      id: genId(),
+      title: (String(body.title || '').trim() || src.name).slice(0, 30),
+      type: src.type,
+      // 正计时任务本身没有目标量，由发起人额外给一个“每轮目标时长”才能排行
+      duration: src.type === 'stopwatch' ? Math.max(0, Number(body.duration) || 0) : src.duration,
+      recurrence: CYCLE[src.recurrence] ? src.recurrence : 'none',
+      owner: user.id,
+      members: [user.id],
+      invites: targets.map((uid) => ({ id: genId(), user: uid, status: 'pending', at: now })),
+      likes: [],
+      createdAt: now,
+    }
+    challenges.push(ch)
+    src.challenge = ch.id
+    saveChallenges()
+    saveTasks(tasks)
+    return sendJSON(res, 200, challengeView(ch, tasks, nameOf, user.id))
+  }
+
+  // GET /api/challenges/:id —— 挑战略详情（成员进度 + 点赞）
+  if (req.method === 'GET' && route === 'challenges' && seg.length === 3) {
+    const ch = findChallenge()
+    if (!ch) return sendJSON(res, 404, { error: '挑战不存在' })
+    if (!ch.members.includes(user.id) && !(ch.invites || []).some((i) => i.user === user.id)) {
+      return sendJSON(res, 403, { error: '你不在这个挑战里' })
+    }
+    return sendJSON(res, 200, challengeView(ch, tasks, nameOf, user.id))
+  }
+
+  // POST /api/challenges/:id/respond  { accept } —— 接受 / 拒绝邀请（拒绝后不再骚扰，除非重新邀请）
+  if (req.method === 'POST' && route === 'challenges' && seg[3] === 'respond') {
+    const body = await readBody(req)
+    const ch = findChallenge()
+    if (!ch) return sendJSON(res, 404, { error: '挑战不存在' })
+    const inv = (ch.invites || []).find((i) => i.user === user.id && i.status === 'pending')
+    if (!inv) return sendJSON(res, 404, { error: '没有待你处理的邀请' })
+    if (!body.accept) {
+      inv.status = 'rejected'
+      inv.at = Date.now()
+      saveChallenges()
+      return sendJSON(res, 200, { ok: true, accepted: false })
+    }
+    inv.status = 'accepted'
+    if (!ch.members.includes(user.id)) ch.members.push(user.id)
+    // 接受 = 给自己建一份同名任务，计时完全独立，只是同一个目标
+    if (!tasks.some((t) => t.challenge === ch.id && t.owner === user.id)) {
+      tasks.push({
+        id: genId(),
+        owner: user.id,
+        name: ch.title,
+        type: ch.type,
+        duration: ch.duration,
+        recurrence: ch.recurrence,
+        challenge: ch.id,
+        status: 'stopped',
+        elapsedBase: 0,
+        startedAt: null,
+        createdAt: Date.now(),
+      })
+      saveTasks(tasks)
+    }
+    saveChallenges()
+    return sendJSON(res, 200, { ok: true, accepted: true })
+  }
+
+  // POST /api/challenges/:id/invite  { to } —— 追加邀请
+  if (req.method === 'POST' && route === 'challenges' && seg[3] === 'invite') {
+    const body = await readBody(req)
+    const ch = findChallenge()
+    if (!ch) return sendJSON(res, 404, { error: '挑战不存在' })
+    if (ch.owner !== user.id) return sendJSON(res, 403, { error: '只有发起人能邀请' })
+    let targets
+    try {
+      targets = inviteList(body, ch)
+    } catch (e) {
+      return sendJSON(res, 400, { error: e.message })
+    }
+    const now = Date.now()
+    // 之前拒绝过的人重新邀请：直接复用那条记录，不留一堆 rejected 垃圾
+    targets.forEach((uid) => {
+      const old = (ch.invites || []).find((i) => i.user === uid)
+      if (old) Object.assign(old, { status: 'pending', at: now })
+      else ch.invites.push({ id: genId(), user: uid, status: 'pending', at: now })
+    })
+    saveChallenges()
+    return sendJSON(res, 200, challengeView(ch, tasks, nameOf, user.id))
+  }
+
+  // POST /api/challenges/:id/like  { user } —— 给某成员的进度点赞（再点取消）
+  if (req.method === 'POST' && route === 'challenges' && seg[3] === 'like') {
+    const body = await readBody(req)
+    const ch = findChallenge()
+    if (!ch) return sendJSON(res, 404, { error: '挑战不存在' })
+    const target = String(body.user || '')
+    if (!ch.members.includes(user.id)) return sendJSON(res, 403, { error: '加入后才能点赞' })
+    if (!ch.members.includes(target)) return sendJSON(res, 404, { error: '对方不在挑战里' })
+    if (target === user.id) return sendJSON(res, 400, { error: '不能给自己点赞' })
+    ch.likes = ch.likes || []
+    const i = ch.likes.findIndex((l) => l.by === user.id && l.target === target)
+    if (i >= 0) ch.likes.splice(i, 1)
+    else ch.likes.push({ by: user.id, target, at: Date.now() })
+    saveChallenges()
+    return sendJSON(res, 200, challengeView(ch, tasks, nameOf, user.id))
+  }
+
+  // POST /api/challenges/:id/leave —— 退出挑战（发起人不能退，只能关闭）
+  if (req.method === 'POST' && route === 'challenges' && seg[3] === 'leave') {
+    const ch = findChallenge()
+    if (!ch) return sendJSON(res, 404, { error: '挑战不存在' })
+    if (ch.owner === user.id) return sendJSON(res, 400, { error: '发起人请直接关闭挑战' })
+    ch.members = ch.members.filter((x) => x !== user.id)
+    ch.invites = (ch.invites || []).filter((i) => i.user !== user.id)
+    tasks.forEach((t) => {
+      if (t.challenge === ch.id && t.owner === user.id) t.challenge = null
+    })
+    saveChallenges()
+    saveTasks(tasks)
+    return sendJSON(res, 200, { ok: true })
+  }
+
+  // DELETE /api/challenges/:id —— 发起人关闭挑战，并解绑所有人的任务
+  if (req.method === 'DELETE' && route === 'challenges' && seg.length === 3) {
+    const idx = challenges.findIndex((c) => c.id === seg[2])
+    if (idx === -1) return sendJSON(res, 404, { error: '挑战不存在' })
+    if (challenges[idx].owner !== user.id) return sendJSON(res, 403, { error: '只有发起人能关闭' })
+    const [gone] = challenges.splice(idx, 1)
+    tasks.forEach((t) => {
+      if (t.challenge === gone.id) t.challenge = null
+    })
+    saveChallenges()
     saveTasks(tasks)
     return sendJSON(res, 200, { ok: true })
   }
@@ -398,13 +567,55 @@ function serveStatic(req, res, pathname) {
 
 /* ---------- 服务 ---------- */
 
-// 启动自检：把三份数据的现状读一遍，有损坏时日志会直接说出“从哪个文件恢复了什么”
+/* 旧版“共享任务”是把同一个任务对象发给好友只读查看，做到的是“一起完成同一份数据”，
+ * 而不是“同一个目标各自打卡”。启动时一次性把它们转成挑战：
+ * 被共享过的人当作“已接受邀请”的成员，各自后面自己建任务计时。 */
+function migrateSharesToChallenges() {
+  const tasks = loadTasks()
+  const challenges = loadChallenges()
+  let moved = 0
+  let dirty = false
+  tasks.forEach((t) => {
+    const list = Array.isArray(t.shareWith) ? t.shareWith.filter(Boolean) : []
+    if (!list.length) {
+      if (t.shareWith) { delete t.shareWith; dirty = true }
+      return
+    }
+    if (t.challenge) { delete t.shareWith; dirty = true; return }
+    const now = Date.now()
+    const ch = {
+      id: genId(),
+      title: t.name,
+      type: t.type,
+      duration: t.type === 'stopwatch' ? 0 : t.duration,
+      recurrence: CYCLE[t.recurrence] ? t.recurrence : 'none',
+      owner: t.owner,
+      members: Array.from(new Set([t.owner, ...list])),
+      invites: list.map((uid) => ({ id: genId(), user: uid, status: 'accepted', at: now })),
+      likes: [],
+      createdAt: now,
+      fromShare: true,
+    }
+    challenges.push(ch)
+    t.challenge = ch.id
+    delete t.shareWith
+    moved++
+    dirty = true
+  })
+  if (moved) saveChallenges()
+  if (dirty) saveTasks()
+  return moved
+}
+
+// 启动自检：把几份数据的现状读一遍，有损坏时日志会直接说出“从哪个文件恢复了什么”
 function selfCheck() {
-  const rows = [usersStore, tasksStore, friendsStore].map((s) => {
+  const rows = [usersStore, tasksStore, friendsStore, challengesStore].map((s) => {
     const { name, count, notes } = s.info()
     return `${name} ${count} 条${notes.length ? '（' + notes.join('，') + '）' : ''}`
   })
   console.log('[store] 数据自检：' + rows.join(' | '))
+  const moved = migrateSharesToChallenges()
+  if (moved) console.log(`[migrate] 已把 ${moved} 个旧“共享任务”转成同任务挑战（被共享者视为已接受）`)
 }
 
 const server = http.createServer((req, res) => {
