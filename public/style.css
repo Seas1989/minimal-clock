@@ -87,6 +87,7 @@ header .link-btn:hover { color: var(--fg-out); }
   border-radius: 20px;
   padding: 28px;
   position: relative;
+  overflow: hidden;   /* 兜底：万一还有写死宽度的子元素，也不准画到卡片外面去盖住邻居 */
   transition: box-shadow 0.25s;
 }
 #task-list { max-height: 46vh; overflow-y: auto; }
@@ -171,24 +172,25 @@ header .link-btn:hover { color: var(--fg-out); }
 .col-resizer:hover span, .col-resizer.on span { background: var(--fg); height: 110px; }
 .col-resizer.on { cursor: col-resize; }
 
-/* 今日进度条（填充主卡片下部空间） */
-.today-strip { margin-top: 24px; display: flex; align-items: center; gap: 12px; }
-.today-bar { flex: 1; height: 5px; border-radius: 5px; background: var(--line); overflow: hidden; }
+/* 今日进度条（填充主卡片下部空间）*/
+.today-strip { margin-top: 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.today-bar { flex: 1 1 120px; height: 5px; border-radius: 5px; background: var(--line); overflow: hidden; }
 .today-bar i { display: block; height: 100%; width: 0; background: var(--fg); border-radius: 5px; transition: width 0.7s cubic-bezier(0.22, 1, 0.36, 1); }
 .today-text { font-size: 12px; color: var(--fg-weak); letter-spacing: 1px; white-space: nowrap; }
 
 .layout-tip { font-size: 13px; line-height: 1.8; color: var(--fg-weak); margin: 10px 0 16px; }
 
-#tabs { display: flex; justify-content: center; gap: 8px; margin-bottom: 24px; }
+#tabs { display: flex; justify-content: center; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
 
 .tab {
   border: none;
   background: transparent;
   color: var(--fg-weak);
   font-size: 14px;
-  padding: 8px 20px;
+  padding: 8px 18px;
   border-radius: 999px;
   cursor: pointer;
+  white-space: nowrap;   /* 窄栏里整个标签换行，而不是把“当前时间”拆成两行 */
   transition: all 0.25s;
 }
 .tab:hover { color: var(--fg); }
@@ -215,7 +217,7 @@ header .link-btn:hover { color: var(--fg-out); }
 .panel { margin-top: 28px; }
 .hidden { display: none !important; }
 
-.btn-row { display: flex; justify-content: center; gap: 12px; }
+.btn-row { display: flex; justify-content: center; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 .ctrl-btn, .ghost-btn {
   border: 1px solid var(--line);
@@ -331,7 +333,7 @@ h2 {
 
 /* ---------- 时长输入组 & 下拉框 ---------- */
 
-.dur-inputs { display: flex; gap: 8px; }
+.dur-inputs { display: flex; gap: 8px; flex-wrap: wrap; }
 .dur-inputs input { width: 58px; text-align: center; }
 
 select {
@@ -407,7 +409,15 @@ select {
 
 /* ---------- 进度环 ---------- */
 
-.dial { position: relative; width: 300px; height: 300px; margin: 4px auto 0; }
+/* 表盘尺寸跟着卡片走：写死 300px 在窄栏里会顶破卡片右边框（块级元素宽于容器时 margin:auto 不居中而是往右溢）
+ * container-type 让内部字号能用 cqw 随表盘缩放，小屏不会反而把字撑出去 */
+.dial {
+  position: relative;
+  width: min(300px, 100%);
+  aspect-ratio: 1 / 1;
+  margin: 4px auto 0;
+  container-type: inline-size;
+}
 .ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: var(--line); stroke-width: 6; }
 .ring-fg {
@@ -425,10 +435,10 @@ select {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 0 34px;
+  padding: 0 10cqw;   /* 留出圆环与文字的安全间距（圆环半径 92/100） */
 }
-.dial .big-time { font-size: 44px; letter-spacing: 1px; word-break: break-all; }
-.dial .sub-time { font-size: 13px; margin-top: 0; }
+.dial .big-time { font-size: clamp(18px, 14.5cqw, 44px); letter-spacing: 1px; white-space: nowrap; }
+.dial .sub-time { font-size: clamp(9px, 4.3cqw, 13px); margin-top: 0; white-space: nowrap; }
 
 /* ---------- Toast ---------- */
 
@@ -555,9 +565,6 @@ label.ghost-btn.small { cursor: pointer; }
   #app-view .col { flex: 1 0 auto; }   /* 窄屏同样不得压缩 */
   header { padding: 20px 20px 0; }
   .big-time { font-size: 56px; }
-  .dial { width: 240px; height: 240px; }
-  .dial .big-time { font-size: 34px; }
+  .dial { width: min(240px, 100%); }   /* 高度由 aspect-ratio 跟着走，不再写死 */
   .card { padding: 22px; }
-  #tabs { flex-wrap: wrap; }
-  .tab { white-space: nowrap; }
 }
