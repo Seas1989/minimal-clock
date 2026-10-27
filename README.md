@@ -340,6 +340,21 @@ node --check public/app.js
 npm test                     # 存储层端到端测试（临时目录，不碰 data/）
 ```
 
+### 改完就推
+
+```bash
+git add -A
+git commit -m "feat: ……"
+git push                     # 凭据在系统凭据管理器里，命令行不出现 token
+```
+
+首次把凭据交给系统（任选其一，之后的推送都不必再带 token）：
+
+- 直接 `git push`，Git Credential Manager 会弹浏览器授权一次；
+- 或用 PAT：`printf "protocol=https\nhost=github.com\nusername=<用户名>\npassword=<token>\n\n" | git credential approve`。
+
+> 不要把 token 写进 remote URL（会明文留在 `.git/config`），也不要给它加 `repo` 以外的写权限。
+
 ---
 
 ## 🛠 已知限制
