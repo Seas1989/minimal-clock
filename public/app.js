@@ -547,6 +547,11 @@ function logout() {
   selectedId = null
   // 退出登录只收起休息层：走 endRest 会顺手替用户 resume，可 token 已经没了
   if (rest) { rest = null; $('rest').classList.add('hidden') }
+  musicPause()
+  queue = null
+  musicCfg = null
+  $('rest-music').classList.add('hidden')
+  closeMusic()
   if (focusId) exitFocus()
   showView(false)
 }
@@ -558,6 +563,7 @@ async function enterApp(username) {
   applyLayout() // 可见后重排一次，保证拖拽限位基于真实尺寸
   await syncTime()
   await Promise.all([refresh(), loadFriends(), loadChallenges()])
+  loadMusicCfg() // 音乐配置不阻塞进入：拉不到只是休息时没声，不该把主界面卡住
   tickDisplay()
 }
 
@@ -1387,7 +1393,9 @@ function startRest(taskId) {
   rest = { endAt: serverNow() + restMins() * 6e4, taskId, total: restMins() * 6e4 }
   $('rest').classList.remove('hidden')
   renderRest()
-  if (typeof musicAutoplay === 'function') musicAutoplay() // 休息开始就放音乐（M6 接入后生效）
+  // 解锁必须在任何 await 之前做：Safari 只认用户手势那一次同步调用，先进音乐帧再填地址
+  unlockAudio()
+  musicAutoplay()
 }
 
 // auto=true 是倒计时走完，否则是手动提前结束
@@ -1396,7 +1404,7 @@ function endRest(auto) {
   rest = null
   $('rest').classList.add('hidden')
   if (!r) return
-  if (typeof musicPause === 'function') musicPause()
+  musicPause()
   if (auto) { beep(); toast('休息结束，已继续计时') }
   else toast('已提前结束休息')
   const t = tasks.find((x) => x.id === r.taskId)
@@ -1436,6 +1444,300 @@ $('rest-len').addEventListener('input', () => {
   }
 })
 
+/* ---------- 休息时的音乐：走服务端的网易云只读代理（MUSIC_U 只存 data/，不进仓库） ---------- */
+
+/* 0 采样的静音 WAV：进休息层时先用它把 <audio> “碰响”，
+ * 不然等 await 拉完地址再 play()，Safari 会当成非手势调用直接拦下 */
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
+
+let musicCfg = null // { hasCookie, cookieMask, source: { kind, value, label } }
+let queue = null    // { kind, name, playlistId, tracks[], offset, temp? }
+const music = { i: 0, tries: 0, loading: false, warn: '' }
+
+const audioEl = () => $('rest-audio')
+const musicVol = () => clamp(lsNum('musicVol', 60), 0, 100) / 100
+const curTrack = () => (queue && queue.tracks && queue.tracks.length ? queue.tracks[music.i] : null)
+
+function unlockAudio() {
+  const a = audioEl()
+  if (a.dataset.unlocked === '1') return
+  a.dataset.unlocked = '1'
+  a.volume = 0
+  a.src = SILENT_WAV
+  a.play().then(() => a.pause()).catch(() => { /* 连静音都不让开就作罢，后面靠用户手点 ▶ */ })
+}
+
+async function loadMusicCfg() {
+  try {
+    musicCfg = await api('/api/netease/config')
+  } catch { musicCfg = null }
+  syncMusicModal()
+}
+
+async function loadQueue(force) {
+  // temp 是弹窗里“试听”临时塞的单曲，进休息必须重拉真正的队列
+  if (queue && !force && !queue.temp) return queue
+  $('rest-music').classList.add('hidden')
+  let q = null
+  try {
+    q = await api('/api/netease/queue')
+  } catch (e) { queue = null; toast('音乐没拿到：' + e.message); return null }
+  if (!q || !Array.isArray(q.tracks) || !q.tracks.length) { queue = null; toast('这个来源里没有能读的曲目'); return null }
+  queue = q
+  music.i = (q.offset || 0) % q.tracks.length
+  music.tries = 0
+  music.warn = ''
+  $('rest-music').classList.remove('hidden')
+  renderMusicBar()
+  return queue
+}
+
+// 取不到地址（付费 / 下架 / 需要 MUSIC_U）就连跳，最多试 5 首，不然后果是一首接一首地空转
+function skipUnplayable() {
+  if (!queue || !queue.tracks.length) return
+  music.tries++
+  if (music.tries >= 5) {
+    music.loading = false
+    music.warn = musicCfg && musicCfg.hasCookie
+      ? '这个来源里连着 5 首都取不到地址，换一批试试'
+      : '连着 5 首都是付费歌，填入 MUSIC_U 后才能播'
+    audioEl().removeAttribute('src')
+    renderMusicBar()
+    return
+  }
+  music.i = (music.i + 1) % queue.tracks.length
+  playCurrent()
+}
+
+async function playCurrent() {
+  if (!queue || !queue.tracks.length) return
+  const t = curTrack()
+  const a = audioEl()
+  music.loading = true
+  renderMusicBar()
+  let r = null
+  try {
+    r = await api(`/api/netease/url?id=${t.id}`)
+  } catch (e) {
+    music.loading = false
+    music.warn = e.message
+    renderMusicBar()
+    return
+  }
+  if (!r.url) { music.loading = false; return skipUnplayable() }
+  music.tries = 0
+  music.loading = false
+  music.warn = ''
+  a.volume = musicVol()
+  a.src = r.url
+  a.play().catch(() => {
+    // 浏览器还是拦了：把按钮留给用户手点，不反复弹提示
+    music.warn = '点了 ▶ 就开始'
+    renderMusicBar()
+  })
+  renderMusicBar()
+}
+
+function musicPause() {
+  const a = audioEl()
+  a.pause()
+  renderMusicBar()
+}
+
+function musicAutoplay() {
+  loadQueue().then((q) => {
+    if (!q) return
+    unlockAudio()
+    playCurrent()
+  })
+}
+
+function stepMusic(d) {
+  if (!queue || !queue.tracks.length) return
+  music.i = ((music.i + d) % queue.tracks.length + queue.tracks.length) % queue.tracks.length
+  music.warn = ''
+  playCurrent()
+}
+
+function renderMusicBar() {
+  if (!queue) return
+  const a = audioEl()
+  const t = curTrack()
+  $('rm-title').textContent = music.warn || (t ? t.name : '—')
+  const artist = t ? [t.artists, t.album].filter(Boolean).join(' · ') : ''
+  $('rm-sub').textContent = music.warn
+    ? ''
+    : `${queue.name} 第 ${music.i + 1}/${queue.tracks.length} 首${artist ? ' · ' + artist : ''}${musicCfg && !musicCfg.hasCookie ? ' · 未填 MUSIC_U（付费歌可能播不了）' : ''}`
+  $('btn-rm-toggle').textContent = a.paused ? '▶ 播放' : '⏸ 暂停'
+  const d = Number(a.duration) || 0
+  $('rm-fill').style.width = music.loading ? '35%' : d > 0 ? `${clamp((a.currentTime / d) * 100, 0, 100).toFixed(2)}%` : '0%'
+}
+
+$('btn-rm-prev').onclick = () => stepMusic(-1)
+$('btn-rm-next').onclick = () => stepMusic(1)
+$('btn-rm-toggle').onclick = () => {
+  const a = audioEl()
+  // 用户主动点 ▶ 就当“再试一次”：之前连跳 5 首设的熔断得重新关掉，否则这个按钮永远是死的
+  music.tries = 0
+  music.warn = ''
+  if (!queue || queue.temp) { loadQueue(true).then((q) => q && playCurrent()); return }
+  if (a.paused) {
+    if (!a.src || a.src === SILENT_WAV) playCurrent()
+    else { a.play().then(renderMusicBar).catch(() => playCurrent()) }
+  } else musicPause()
+}
+audioEl().addEventListener('timeupdate', renderMusicBar)
+audioEl().addEventListener('play', renderMusicBar)
+audioEl().addEventListener('pause', renderMusicBar)
+audioEl().addEventListener('ended', () => stepMusic(1))
+audioEl().addEventListener('error', () => {
+  const src = audioEl().src || ''
+  if (!src || src === SILENT_WAV) return // 解锁用的静音帧不算失败
+  skipUnplayable()
+})
+
+/* ----- 音乐设置弹窗 ----- */
+
+function openMusic() {
+  $('music-modal').classList.remove('hidden')
+  syncMusicModal()
+  loadMusicCfg()
+}
+
+function closeMusic() { $('music-modal').classList.add('hidden') }
+
+function syncMusicModal() {
+  const src = (musicCfg && musicCfg.source) || { kind: 'light', value: '' }
+  document.querySelectorAll('#music-kind-group button').forEach((b) => b.classList.toggle('active', b.dataset.kind === src.kind))
+  $('music-mine').classList.toggle('hidden', src.kind !== 'mine')
+  $('music-pid-row').classList.toggle('hidden', src.kind !== 'playlist')
+  if (document.activeElement !== $('music-pid')) $('music-pid').value = src.value || ''
+  const vol = clamp(lsNum('musicVol', 60), 0, 100)
+  $('music-vol').value = vol
+  $('music-vol-text').textContent = `${vol}%`
+  $('music-cookie').value = ''
+  $('music-status').textContent = musicCfg
+    ? musicCfg.hasCookie
+      ? `已保存 MUSIC_U（${musicCfg.cookieMask}），付费歌也能取到地址` // 只给打码指纹，明文不回传
+      : '未填 MUSIC_U：只播免费曲目，内置轻音乐照常可用'
+    : '未登录，音乐设置不可用'
+}
+
+async function saveMusicCfg(patch) {
+  try {
+    musicCfg = await api('/api/netease/config', { method: 'POST', body: JSON.stringify(patch) })
+    queue = null // 来源变了，下次休息重拉队列
+    syncMusicModal()
+    return true
+  } catch (e) { toast(e.message); return false }
+}
+
+document.querySelectorAll('#music-kind-group button').forEach((b) => {
+  b.onclick = () => {
+    const kind = b.dataset.kind
+    if (kind === 'playlist') {
+      const value = $('music-pid').value
+      saveMusicCfg({ kind, value, label: '' }).then((saved) => {
+        if (saved && !value) toast('把歌单链接或 ID 填到下面这一行')
+      })
+      return
+    }
+    saveMusicCfg({ kind, value: '', label: '' })
+  }
+})
+
+$('music-pid').addEventListener('change', () => {
+  if ((musicCfg && musicCfg.source.kind) !== 'playlist') return
+  saveMusicCfg({ kind: 'playlist', value: $('music-pid').value, label: '' })
+})
+
+$('btn-music-load-pl').onclick = async () => {
+  const box = $('music-pl-list')
+  box.innerHTML = '<div class="empty-tip">读取中…</div>'
+  try {
+    const r = await api('/api/netease/playlists')
+    box.innerHTML = ''
+    if (!r.playlists.length) box.innerHTML = '<div class="empty-tip">这个账号下没有歌单</div>'
+    r.playlists.forEach((p) => {
+      box.appendChild(musicItem(p.name, `${p.trackCount} 首`, '用它', () => saveMusicCfg({ kind: 'playlist', value: String(p.id), label: p.name })))
+    })
+  } catch (e) {
+    box.innerHTML = `<div class="empty-tip">${e.message}</div>`
+  }
+}
+
+$('btn-music-search').onclick = searchMusic
+$('music-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchMusic() })
+
+// 歌单和单曲各拉一次：歌单用来设来源，单曲用来试听
+async function searchMusic() {
+  const kw = $('music-q').value.trim()
+  const box = $('music-result')
+  box.innerHTML = `<div class="empty-tip">${kw ? '搜索中…' : '试试搜「轻音乐」'}</div>`
+  if (!kw) return
+  const [pls, songs] = await Promise.all([
+    api(`/api/netease/search?q=${encodeURIComponent(kw)}&kind=playlist`).catch(() => []),
+    api(`/api/netease/search?q=${encodeURIComponent(kw)}`).catch(() => []),
+  ])
+  box.innerHTML = ''
+  if (!pls.length && !songs.length) box.innerHTML = '<div class="empty-tip">网易云没返回结果</div>'
+  pls.forEach((p) => {
+    box.appendChild(musicItem(p.name, `歌单 · ${p.trackCount} 首 · ${p.creator || ''}`, '设为来源', () => saveMusicCfg({ kind: 'playlist', value: String(p.id), label: p.name })))
+  })
+  songs.slice(0, 8).forEach((s) => {
+    box.appendChild(musicItem(s.name, `${s.artists} · ${Math.round(s.duration / 1000)}s`, '试听', () => previewSong(s)))
+  })
+}
+
+function musicItem(name, sub, btnText, onclick) {
+  const row = document.createElement('div')
+  row.className = 'music-item'
+  const main = document.createElement('div')
+  main.className = 'music-main'
+  const t = document.createElement('div')
+  t.className = 'music-name'
+  t.textContent = name
+  const s = document.createElement('div')
+  s.className = 'music-sub'
+  s.textContent = sub
+  main.appendChild(t)
+  main.appendChild(s)
+  row.appendChild(main)
+  const b = document.createElement('button')
+  b.className = 'ghost-btn small'
+  b.textContent = btnText
+  b.onclick = onclick
+  row.appendChild(b)
+  return row
+}
+
+// 试听只影响弹窗，不改动休息用的队列：标上 temp，下次进休息会重拉
+function previewSong(s) {
+  unlockAudio()
+  queue = { kind: 'preview', name: '试听', playlistId: 0, tracks: [s], offset: 0, temp: true }
+  music.i = 0
+  music.tries = 0
+  music.warn = ''
+  $('rest-music').classList.remove('hidden')
+  playCurrent()
+}
+
+$('btn-music').onclick = openMusic
+$('btn-music-close').onclick = closeMusic
+$('music-modal').addEventListener('click', (e) => { if (e.target.id === 'music-modal') closeMusic() })
+$('btn-music-save').onclick = () => {
+  const v = $('music-cookie').value.trim()
+  if (!v) return toast('先把 MUSIC_U 粘进来（或点「清除」删掉已存的）')
+  saveMusicCfg({ musicU: v })
+}
+$('btn-music-clear').onclick = () => saveMusicCfg({ musicU: '' })
+$('music-vol').addEventListener('input', () => {
+  const v = clamp(Number($('music-vol').value) || 0, 0, 100)
+  localStorage.setItem('musicVol', String(v))
+  $('music-vol-text').textContent = `${v}%`
+  audioEl().volume = v / 100
+})
+
 /* ---------- 标签页 ---------- */
 
 function setMode(m, persist = true) {
@@ -1462,11 +1764,12 @@ document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase()
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return
   if (e.key === 'Escape') {
-    // 一层层退出：确认框 > 休息 > 专注 > 挑战详情 > 发起挑战弹窗，不能一上来就把专注关掉
+    // 一层层退出：确认框 > 休息 > 专注 > 挑战详情 > 音乐弹窗 > 发起挑战弹窗，不能一上来就把专注关掉
     if (!$('confirm-modal').classList.contains('hidden')) { closeConfirm(false); return }
     if (rest) { endRest(false); return }
     if (focusId) { exitFocus(); return }
     if (!$('challenge-modal').classList.contains('hidden')) { closeChallenge(); return }
+    if (!$('music-modal').classList.contains('hidden')) { closeMusic(); return }
     closeShare()
     return
   }

@@ -4,6 +4,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { Store } = require('./lib/store')
 const { CYCLE, challengeView } = require('./lib/challenges')
+const ne = require('./lib/netease')
 
 const PORT = process.env.PORT || 3000
 const PUBLIC_DIR = path.join(__dirname, 'public')
@@ -540,6 +541,97 @@ async function handleAPI(req, res, pathname) {
     return sendJSON(res, 200, { ok: true })
   }
 
+  /* ----- 网易云音乐（休息时放歌）：全部需登录，免得本机沦为公开代理 -----
+   *
+   * MUSIC_U 只存 data/settings.json（该目录不入库），任何接口都不回传明文，
+   * 只给一个打码后的指纹用于确认“存对了没”。
+   */
+  if (route === 'netease') {
+    const q = new URL(req.url, `http://${req.headers.host}`).searchParams
+    const view = (row) => ({
+      hasCookie: !!row.musicU,
+      // 打码指纹：前 6 后 4，够用户核对自己粘的是哪一段了
+      cookieMask: row.musicU ? `${row.musicU.slice(0, 6)}…${row.musicU.slice(-4)}` : '',
+      source: row.source,
+    })
+    const rowOf = () => {
+      const list = loadSettings()
+      let row = list.find((s) => s.user === user.id)
+      if (!row) {
+        row = { user: user.id, musicU: '', source: { kind: 'light', value: '', label: '' }, updatedAt: Date.now() }
+        list.push(row)
+        saveSettings()
+      }
+      return row
+    }
+
+    if (req.method === 'GET' && seg[2] === 'config') {
+      return sendJSON(res, 200, view(rowOf()))
+    }
+
+    // POST {musicU?, kind?, value?, label?} —— 空串 musicU 表示清除
+    if (req.method === 'POST' && seg[2] === 'config') {
+      const body = await readBody(req)
+      const row = rowOf()
+      if ('musicU' in body) {
+        const v = body.musicU ? ne.extractMusicU(body.musicU) : ''
+        if (body.musicU && !v) return sendJSON(res, 400, { error: 'MUSIC_U 看着不对（长度不在 20–4000），重新从网易云网页端复制' })
+        row.musicU = v
+      }
+      if ('kind' in body) {
+        const kind = ['light', 'playlist', 'mine'].includes(body.kind) ? body.kind : 'light'
+        const raw = String(body.value || '').trim()
+        // 只切来源、还没填链接时先存空：拉队列时会说“还没选歌单”，比在这儿报 400 卡住用户顺手
+        const value = kind === 'playlist' ? ne.extractPlaylistId(raw) : ''
+        if (kind === 'playlist' && raw && !value) return sendJSON(res, 400, { error: '歌单链接或 ID 提取不出来' })
+        row.source = { kind, value, label: String(body.label || '').slice(0, 60) }
+      }
+      row.updatedAt = Date.now()
+      saveSettings()
+      return sendJSON(res, 200, view(row))
+    }
+
+    // 远端失败统一报 502：与自己的数据出错区分开，前端只提示“这次没拿到”，不把弹窗打碎
+    // neteaseFetch 的错误消息已经自带“网易云 / 连不上”字样，再加前缀就变成两句重复的话
+    const remote = (e) => sendJSON(res, 502, { error: e.message })
+
+    if (req.method === 'GET' && seg[2] === 'playlists') {
+      try {
+        const r = await ne.myPlaylists({ cookie: rowOf().musicU })
+        return sendJSON(res, 200, r)
+      } catch (e) { return remote(e) }
+    }
+
+    if (req.method === 'GET' && seg[2] === 'search') {
+      const kw = String(q.get('q') || '').trim()
+      if (kw.length > 60) return sendJSON(res, 400, { error: '搜索词太长了' })
+      try {
+        return sendJSON(res, 200, await ne.search(kw || '轻音乐', { kind: q.get('kind') === 'playlist' ? 'playlist' : 'song', limit: 20 }))
+      } catch (e) { return remote(e) }
+    }
+
+    // 本次休息要播的队列：按用户配置拼好，前端拿到就是一串可直接播的曲目
+    if (req.method === 'GET' && seg[2] === 'queue') {
+      const row = rowOf()
+      try {
+        const r = await ne.buildQueue(row.source, { cookie: row.musicU })
+        return sendJSON(res, 200, Object.assign({}, r, {
+          offset: Math.floor(Math.random() * r.tracks.length), // 每次进来换个开头，不然休息总是从第一首开始
+          playable: ne.sortByPlayable(r.tracks, !!row.musicU).length,
+        }))
+      } catch (e) { return remote(e) }
+    }
+
+    if (req.method === 'GET' && seg[2] === 'url') {
+      const row = rowOf()
+      try {
+        const r = await ne.songUrl(q.get('id'), { cookie: row.musicU })
+        // 取不到地址也回 200：r.url 为空 + r.reason 说明原因，比一个没有响应体的 204 好处理
+        return sendJSON(res, 200, r)
+      } catch (e) { return remote(e) }
+    }
+  }
+
   return sendJSON(res, 404, { error: 'not found' })
 }
 
@@ -609,7 +701,7 @@ function migrateSharesToChallenges() {
 
 // 启动自检：把几份数据的现状读一遍，有损坏时日志会直接说出“从哪个文件恢复了什么”
 function selfCheck() {
-  const rows = [usersStore, tasksStore, friendsStore, challengesStore].map((s) => {
+  const rows = [usersStore, tasksStore, friendsStore, challengesStore, settingsStore].map((s) => {
     const { name, count, notes } = s.info()
     return `${name} ${count} 条${notes.length ? '（' + notes.join('，') + '）' : ''}`
   })

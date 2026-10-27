@@ -13,6 +13,7 @@
     <div class="header-right">
       <button id="btn-layout" class="link-btn">布局</button>
       <button id="btn-bg" class="link-btn">背景</button>
+      <button id="btn-music" class="link-btn">音乐</button>
       <div id="theme-picker"></div>
       <span id="user-box" class="hidden">
         <span id="user-name"></span>
@@ -186,6 +187,55 @@
         <button id="btn-rest-end" class="ctrl-btn solid">结束休息</button>
       </div>
       <label class="bg-slider" id="rest-len-row">下次休息<input type="range" id="rest-len" min="1" max="30" step="1" value="5"><span id="rest-len-text" class="bg-tip"></span></label>
+      <!-- 休息时的音乐：进休息层自动接上队列，可切歌/暂停 -->
+      <div id="rest-music" class="rest-music hidden">
+        <div class="btn-row">
+          <button id="btn-rm-prev" class="ghost-btn small">⏮ 上一首</button>
+          <button id="btn-rm-toggle" class="ctrl-btn solid">▶ 播放</button>
+          <button id="btn-rm-next" class="ghost-btn small">下一首 ⏭</button>
+        </div>
+        <div id="rm-title" class="rm-title"></div>
+        <div id="rm-sub" class="rm-sub"></div>
+        <div class="focus-bar rm-bar"><i id="rm-fill"></i></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 休息时的音乐：走服务端代理读网易云，MUSIC_U 只存 data/，不入库 -->
+  <div id="music-modal" class="modal hidden">
+    <div class="modal-box wide">
+      <h3>休息时的音乐</h3>
+      <p class="layout-tip">休息倒计时里自动播。不填 MUSIC_U 也能用：默认放内置的<strong>轻音乐歌单</strong>，取不到地址的付费曲目会自动排到后面。</p>
+      <div class="bg-btns">
+        <span class="bg-tip">来源</span>
+        <div class="fit-group" id="music-kind-group">
+          <button data-kind="light" class="active">轻音乐</button>
+          <button data-kind="mine">我的歌单</button>
+          <button data-kind="playlist">指定歌单</button>
+        </div>
+      </div>
+      <div id="music-mine" class="hidden">
+        <button id="btn-music-load-pl" class="ghost-btn small">读取我的歌单</button>
+        <div id="music-pl-list" class="music-list"></div>
+      </div>
+      <label id="music-pid-row" class="bg-slider">歌单链接 / ID<input type="text" id="music-pid" maxlength="90" placeholder="https://music.163.com/#/playlist?id=2392709157"></label>
+      <div class="bg-btns">
+        <span class="bg-tip">搜索</span>
+        <input type="text" id="music-q" maxlength="40" placeholder="歌名或歌单名，回车搜索">
+        <button id="btn-music-search" class="ghost-btn small">搜索</button>
+      </div>
+      <div id="music-result" class="music-list"></div>
+      <label class="bg-slider">音量<input type="range" id="music-vol" min="0" max="100" step="5" value="60"><span id="music-vol-text" class="bg-tip"></span></label>
+      <div class="bg-btns">
+        <span class="bg-tip">MUSIC_U</span>
+        <input type="text" id="music-cookie" maxlength="4200" placeholder="网易云网页端登录后复制 MUSIC_U（整条 Cookie 粘进来也行）">
+        <button id="btn-music-save" class="ghost-btn small">保存</button>
+        <button id="btn-music-clear" class="ghost-btn small">清除</button>
+      </div>
+      <div id="music-status" class="bg-tip"></div>
+      <div class="modal-actions">
+        <button id="btn-music-close" class="ctrl-btn solid">完成</button>
+      </div>
     </div>
   </div>
 
@@ -247,6 +297,9 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+
+  <!-- 休息时的播放元素：放在层外，收起了也在走，不会被 display:none 影响 -->
+  <audio id="rest-audio" preload="auto"></audio>
 
   <script src="physics.js"></script>
   <script src="app.js"></script>

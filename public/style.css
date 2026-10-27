@@ -434,6 +434,7 @@ select {
   z-index: 20;
   display: flex;
   padding: 20px;
+  overflow-y: auto; /* 休息层里加了播放条后内容可能超出一屏，不能把下面裁掉 */
   /* 背后整页虚化：剩下的这一个窗才是清的，模拟“屏幕上只有这个窗口”的专注感。
    * 底色用主题色掺透明而不是抹黑，否则浅色主题下白底配深色字会直接看不见 */
   backdrop-filter: blur(22px) saturate(0.75);
@@ -508,6 +509,52 @@ select {
 .share-chip.dim { opacity: 0.45; }
 .share-friends:empty { min-height: 0; }
 #share-goal-row { margin-bottom: 12px; }
+
+/* ---------- 休息时的音乐 ---------- */
+
+/* 播放条默认收起，拉到队列了才占位，不破坏休息层的居中美 */
+.rest-music { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; margin-top: 4px; }
+.rm-title { font-size: 15px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rm-sub {
+  font-size: 12px;
+  color: var(--fg-weak);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-bar { max-width: 260px; }
+#music-modal {
+  /* 和挑战详情一个路子：背后雾化得轻一点，焦点留给弹窗本身 */
+  backdrop-filter: blur(10px) saturate(0.85);
+  -webkit-backdrop-filter: blur(10px) saturate(0.85);
+}
+#music-pid-row { margin: 10px 0; }
+#music-pid-row input, #music-cookie, #music-q { flex: 1; min-width: 120px; }
+.music-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 230px;
+  overflow-y: auto;
+  margin: 6px 0;
+}
+.music-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.music-item:last-child { border-bottom: none; }
+.music-main { flex: 1; min-width: 0; }
+.music-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.music-sub {
+  font-size: 12px;
+  color: var(--fg-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ---------- 共享弹窗 ---------- */
 

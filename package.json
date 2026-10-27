@@ -1,11 +1,11 @@
 {
   "name": "minimal-clock",
   "version": "1.2.0",
-  "description": "零依赖极简时钟：倒计时 / 正计时 / 当前时间，多任务多窗口、同任务挑战、自定义背景与可拖拽面板布局",
+  "description": "零依赖极简时钟：倒计时 / 正计时 / 当前时间，多任务多窗口、同任务挑战、休息时放网易云、自定义背景与可拖拽面板布局",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/store.test.js && node test/challenge.test.js"
+    "test": "node test/store.test.js && node test/challenge.test.js && node test/netease.test.js"
   },
   "engines": {
     "node": ">=16"
