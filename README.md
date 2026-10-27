@@ -1,6 +1,6 @@
 # 时钟 · Minimal Clock
 
-一个**零依赖**的极简时钟 Web 应用：当前时间 / 倒计时 / 正计时三合一，支持多任务并发、每日到每年的循环提醒、好友任务共享、自定义背景取景，以及**可拖拽重排的面板布局**。后端只用 Node 原生模块（`http` / `fs` / `crypto`），没有一行第三方依赖，克隆下来就能跑。
+一个**零依赖**的极简时钟 Web 应用：当前时间 / 倒计时 / 正计时三合一，支持多任务并发、每日到每年的循环提醒、好友任务共享、自定义背景取景，以及**可拖拽重排、由自写弹簧物理驱动的面板布局**。后端只用 Node 原生模块（`http` / `fs` / `crypto`），没有一行第三方依赖，克隆下来就能跑。
 
 > 打开即用：`node server.js` → http://localhost:3000
 
@@ -34,7 +34,9 @@
 | --- | --- | --- |
 | 运行时 | Node.js ≥ 16 | 仅用 `http` / `fs` / `path` / `crypto` 原生模块 |
 | 后端 | 手写 HTTP 服务 | 路由 + 静态文件 + JSON 持久化，无框架 |
+| 存储层 | `lib/store.js`（~130 行） | 内存为真源 + 原子写 + `.bak` 自动回滚，无数据库依赖 |
 | 前端 | 原生 HTML / CSS / JS | 无构建、无打包、无框架 |
+| 动效 | `public/physics.js`（~110 行） | 自写弹簧积分引擎（半隐式欧拉），非第三方库 |
 | 数据 | JSON 文件（`data/`） | 首次启动自动生成目录 |
 | 状态记忆 | `localStorage` | 主题、模式、背景、布局都存本地 |
 
@@ -44,23 +46,29 @@
 
 ```
 .
-├── server.js           # 后端入口：路由、鉴权、静态服务、JSON 读写
-├── package.json        # 元信息 + npm start
+├── server.js           # 后端入口：路由、鉴权、静态服务
+├── lib/
+│   └── store.js        # 存储层：内存真源 + 原子写 + 备份回滚（无第三方依赖）
+├── package.json        # 元信息 + npm start / npm test
 ├── LICENSE             # MIT
 ├── README.md
+├── test/
+│   └── store.test.js   # 端到端测试：重启不丢账号、并发不覆盖、坏文件自动恢复
 ├── public/             # 前端静态资源（无任何构建步骤）
 │   ├── index.html      # 页面骨架：面板、弹窗、控件
-│   ├── style.css       # 主题变量、布局、拖拽/果冻/撕纸动画
-│   └── app.js          # 全部前端逻辑：计时、渲染、背景、布局、API 调用
+│   ├── style.css       # 主题变量、布局动画
+│   ├── physics.js      # 微物理引擎：弹簧 / 全局 rAF 心跳 / 指针速度 / 橡皮筋
+│   └── app.js          # 全部前端逻辑：计时、渲染、背景、拖拽布局、API 调用
 ├── data/               # ⚠️ 运行期数据，含账号信息，已在 .gitignore 中排除
 │   ├── users.json      # 用户（id / username / salt / hash / token）
 │   ├── tasks.json      # 任务（按 owner 隔离，含共享关系）
-│   └── friends.json    # 好友关系
+│   ├── friends.json    # 好友关系
+│   └── *.bak / *.bad-* # 存储层自动维护的备份与损坏留档（同样不入库）
 └── scripts/            # ⚠️ 本机专用脚本（含本地绝对路径），同样不入库
     └── start-clock.bat # Windows 启动脚本
 ```
 
-划分原则：**`server.js` 只管接口和文件读写，`public/` 只管界面和交互**，两边通过 `/api/*` 通信；数据与本机脚本一律与源码隔离，`git clone` 出来的仓库永远是干净的代码。
+划分原则：**`server.js` 只管接口，`lib/store.js` 只管数据怎么存，`public/` 只管界面和交互**，两边通过 `/api/*` 通信；数据与本机脚本一律与源码隔离，`git clone` 出来的仓库永远是干净的代码。
 
 ---
 
@@ -68,14 +76,20 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/<你的用户名>/<仓库名>.git
-cd <仓库名>
+git clone https://github.com/Seas1989/minimal-clock.git
+cd minimal-clock
 
 # 2. 启动（无需 npm install）
 node server.js          # 或 npm start
 
 # 3. 浏览器打开
 http://localhost:3000
+```
+
+可选：跑一遍存储层的端到端测试（自己拉起服务、用临时数据目录，不碰 `data/`）：
+
+```bash
+npm test                # 14 项断言：重启不丢账号 / 并发注册不覆盖 / 坏文件自动回滚
 ```
 
 换端口：
@@ -137,17 +151,21 @@ $env:PORT="8080"; node server.js
 点顶栏「布局」打开面板，或直接开拖：
 
 - **抓边框起拖**：每张卡片四边有 10px 命中区，右上角还有点状提手，鼠标变成 `grab` 就能拖
-- **挤让位**：拖动时其他面板用 FLIP（First-Last-Invert-Play）动画被"挤开"，而不是瞬间跳位；插入位置由虚线占位符指示
-- **果冻质感**：拖拽中的卡片由**速度**驱动 `skewX / scale / rotate`，横向拖得快就斜着拉长，松手自动弹回，落位播放 `jelly` 关键帧回弹
-- **撕纸边缘**：拖起时卡片圆角被替换为每 ~110ms 刷新一次的不规则多边形 `clip-path`，像一张被撕着移动的纸；落位后毛边逐帧收敛再恢复圆角
-- **列宽挤压**：拖动两列之间的竖条，另一列被"挤窄"（220–620px）
+- **弹簧跟手**：卡片不是直接贴在指针上，而是被一根“很硬的弹簧”（刚度 1050 / 阻尼 48）拖着追指针 —— 急转向时会跟不上半步再追回来，就有重量感了
+- **挤让位**：拖动时其他面板的位移不是 CSS 过渡，而是把布局跳变的差量当作“初始偏移 + 保留原有速度”交给弹簧回拉，连续挤压会**累积动量**，越挤越“撞”；插入位置由虚线占位符指示
+- **惯性甩出**：松手时把卡片自身速度注入落位弹簧，快抛出去会过冲一段再弹回，慢放则直接归位
+- **果冻质感**：形变与倾角取“手的即时速度”驱动 `skewX / scale / rotate`，横向拖得快就斜着拉长，一停就弹回（形变弹簧的静止阈值收到千分级，否则末尾“弹回原尺寸”会被当成误差直接跳掉）
+- **撕纸边缘**：拖起时圆角被替换为每 ~90ms 刷新一次的不规则多边形 `clip-path`，毛边幅度随拖拽速度涨；落位后逐帧收敛再恢复圆角
+- **橡皮筋边界**：拖出可用区不会硬停，而是按 iOS 橡皮筋公式越拉越沉，能拽出去一点但脱不了缰
+- **列宽挤压**：拖动两列之间的竖条，另一列被“挤窄”（220–620px）
 - **模板**：经典（右栏）/ 侧栏居左 / 单栏，一键切换并带动画过渡
 - **目标列高亮**：拖到哪一栏，那一栏就亮起虚线框，松手前就知道会落在哪
 - **不会互相盖住**：所有面板与列都是 `flex-shrink: 0`，宁可让页面滚动也不把卡片压到比内容还矮（压扁会让溢出内容画到下一张卡片上，看起来像两个面板占了同一位置）
 - **打断也能落位**：触屏被系统手势打断（`pointercancel`）、拖到一半切窗口（`blur`）都会正常落位；万一残留，下次加载会把飘在 `body` 上的卡片接回归属列并清掉内联定位
+- **省电**：全部弹簧共用一条 `requestAnimationFrame` 心跳，静止后自动停摆，不空转
 - **恢复默认**：布局弹窗内可一键重置
 
-布局结果存 `localStorage` 的 `layoutV2`，重开浏览器保持不变；数据异常时自动回落到默认布局。
+布局结果存 `localStorage` 的 `layoutV2`，重开浏览器保持不变；数据异常时自动回落到默认布局。没引入第三方物理库（GSAP / matter.js 与“零依赖、无构建”的定位冲突），`public/physics.js` 一百行写完。
 
 ### 文字对比度自适应
 
@@ -180,10 +198,11 @@ $env:PORT="8080"; node server.js
 | `POST` | `/api/login` | 同上，登录会刷新 token |
 | `GET` | `/api/me` | 校验 token，返回用户名 |
 | `GET` | `/api/tasks` | 我的任务 + 共享给我的任务 |
-| `POST` | `/api/tasks` | 新建 `{name, durationMs, recurrence}` |
-| `PATCH` | `/api/tasks/:id` | 更新（暂停 / 继续 / 重置 / 改名） |
+| `POST` | `/api/tasks` | 新建 `{name, type, duration, recurrence}` |
+| `POST` | `/api/tasks/:id/action` | `{action}` start / pause / resume / reset / complete |
 | `DELETE` | `/api/tasks/:id` | 删除任务 |
-| `POST` | `/api/tasks/:id/share` | `{friendId}` 共享给好友 |
+| `POST` | `/api/tasks/:id/share` | `{to: friendId \| 'all'}` 共享给好友 |
+| `POST` | `/api/tasks/:id/unshare` | `{from: friendId \| 'all'}` 撤回共享 |
 | `GET` | `/api/friends` | 好友列表 + 待处理申请 |
 | `POST` | `/api/friends/request` | `{username}` 发起好友申请 |
 | `POST` | `/api/friends/respond` | `{reqId, accept}` 处理申请 |
@@ -198,6 +217,27 @@ $env:PORT="8080"; node server.js
 - 上传体积限制 1 MB，静态服务对路径做了 `normalize` + 前缀校验，防目录穿越
 - 用户数上限 50（自用场景），`data/*.json` 为纯文本，**切勿提交到公开仓库**
 - `.gitignore` 已排除 `data/`、`scripts/`、`*.log`、`.idea/`
+
+### 为什么重启不会丢账号（`lib/store.js`）
+
+旧写法是“每个请求自己读文件 → 改 → 整体写回”，两个真实丢数据的坑就埋在这里：
+
+| 坑 | 旧行为 | 现在的做法 |
+| --- | --- | --- |
+| 并发注册 | 两个请求各自读到同一份列表，后写的把先写的盖掉 → 账号静默消失 | 内存数组是唯一真源，“取→改→写盘”全在同步代码里完成 |
+| 写一半断电 | `writeFileSync` 直接盖主文件，断电就留半截 JSON | 先写 `.tmp` + `fsync`，确认落盘后再原子改名替换 |
+| 主文件坏了 | `catch` 里返回 `[]` → 下次保存直接清空整个文件 | 依次试 `主文件 → .tmp → .bak`，恢复后固化；坏文件改名 `.bad-时间戳` 留档，绝不静默清空 |
+| 字段不齐 | 登录后 `user.salt` 踩空 | 载入时 `validate` 剔除不完整记录并在启动日志里说明剔了几条 |
+
+启动时会做一次自检，日志直接报数：
+
+```
+[store] 数据自检：users.json 3 条 | tasks.json 12 条 | friends.json 2 条
+```
+
+出过事则会写明从哪个文件恢复：“`[store] 已从 users.json.bak 恢复 users.json（3 条）`”。
+
+`npm test` 把上面四条坑当作断言跑一遍（用系统临时目录做 `DATA_DIR`，不碰真实 `data/`）。
 
 ---
 
@@ -243,9 +283,13 @@ Set-Content -Path (Join-Path $startup '时钟服务自动启动.vbs') -Value $co
 
 ## 📤 上传到 GitHub
 
+本仓库已上线：https://github.com/Seas1989/minimal-clock。下面步骤是给自己换机器 / 重建仓库时复现用的。
+
 ### 1. 建仓库
 
 GitHub → New repository → 起名（如 `minimal-clock`）→ **不要勾选** "Add a README"（本地已有，勾了会产生冲突提交）。
+
+> 踩过的坑：**fine-grained token 不能建仓**。`POST /user/repos` 只支持 classic token / OAuth，fine-grained 无论怎么加权限都是 403 `Resource not accessible by personal access token`。建仓要么走网页手动，要么用有 `Administration: Read and write` 的 classic token。
 
 ### 2. 首次提交并推送
 
@@ -277,32 +321,40 @@ git add . && git commit -m "docs: 更新说明" && git push
 
 ### 5. 核对仓库内容
 
-公开仓库里应当只有：`server.js`、`package.json`、`README.md`、`LICENSE`、`.gitignore`、`public/` 三个文件。看到 `users.json` 或 `.idea/` 立即 `git rm -r --cached` 并重新推送。
+公开仓库里应当只有：`server.js`、`lib/store.js`、`test/store.test.js`、`public/` 四个文件、`package.json`、`README.md`、`LICENSE`、`.gitignore`。看到 `users.json`、`scripts/` 或 `.idea/` 立即 `git rm -r --cached` 并重新推送。
+
+```bash
+git ls-tree -r --name-only origin/main    # 一眼扫完全清单
+git config --get remote.origin.url        # 确认 URL 里没有嵌 token
+```
 
 ---
 
 ## 🧪 开发方式
 
-没有构建步骤，改完 `public/` 里的文件直接刷新浏览器。改了 `server.js` 需要重启进程。
+没有构建步骤，改完 `public/` 里的文件直接刷新浏览器。改了 `server.js` 或 `lib/` 需要重启进程。
 
 ```bash
-node --check server.js   # 语法自检
+node --check server.js       # 语法自检
 node --check public/app.js
+npm test                     # 存储层端到端测试（临时目录，不碰 data/）
 ```
 
 ---
 
 ## 🛠 已知限制
 
-- JSON 文件存储是**同步读写**，几十用户够用，再多就该换数据库
+- JSON 文件存储靠“内存真源 + 原子写盘”，几十用户够用；真要上百并发就该换数据库
+- 数据只在启动时读盘，服务跑着的时候手工改 `data/*.json` 不会被发现（重启才会）
 - 好友共享只读进度，不能协作控制同一个任务
 - 背景图以 dataURL 存在浏览器本地，大图（约 >2 MB）可能超出 `localStorage` 配额，会提示改用外链
 - 无 WebSocket：好友进度靠前端轮询刷新
-- 布局拖拽只在桌面指针事件下测试充分，触屏可用但没有惯性甩动等手势优化
+- 拖拽的惯性 / 果冻手感在桌面指针事件下调过；触屏能拖、也有惯性，但未逐机型验证多指与系统手势冲突
 
 ## 🔭 可扩展方向
 
-- 存储层换成 SQLite（`node:sqlite`）或 Postgres，顺带解决部署易失问题
+- 存储层换成 SQLite（Node 22+ 自带 `node:sqlite`，仍零依赖）或 Postgres，顺带解决部署易失问题
+- 拖拽物理参数（刚度 / 阻尼 / 质量）暴露成设置项，支持“干脆”与“果冻”两档手感
 - 学习/专注时长统计与周视图报表
 - 好友排行榜、打卡日历
 - WebSocket 或 SSE 推送替代轮询

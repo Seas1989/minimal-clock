@@ -1,10 +1,11 @@
 {
   "name": "minimal-clock",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "零依赖极简时钟：倒计时 / 正计时 / 当前时间，多任务、好友共享、自定义背景与可拖拽面板布局",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node test/store.test.js"
   },
   "engines": {
     "node": ">=16"
@@ -14,7 +15,8 @@
     "countdown",
     "timer",
     "pomodoro",
-    "zero-dependency"
+    "zero-dependency",
+    "spring-physics"
   ],
   "license": "MIT",
   "private": true

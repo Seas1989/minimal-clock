@@ -991,41 +991,68 @@ let layout = loadLayout()
 const panelEl = (id) => document.querySelector(`.card[data-panel="${id}"]`)
 function saveLayout() { localStorage.setItem('layoutV2', JSON.stringify(layout)) }
 
-// FLIP：先量旧位置，改动后用 transform 播回去 —— 其他面板是被“挤开”而不是瞬移
+/* ---------- 物理驱动：所有面板共用一条 rAF 心跳 ---------- */
+
+const { Spring, Spring2, Ticker, Tracker, rubber } = window.Phys
+
+const bodyPhys = new Map() // card -> { p 位移弹簧, sq 形变弹簧, rot 倾角弹簧 }
+function physOf(card) {
+  let b = bodyPhys.get(card)
+  if (!b) {
+    b = {
+      // 让位弹簧：偏软带一点过冲，被挤开时会晃一下再停，而不是匀速滑过去
+      p: new Spring2(0, 0, { stiffness: 260, damping: 21 }),
+      // 缩放弹簧量纲是 1.0，静止阈值必须收到千分级，否则末尾“弹回原尺寸”会被当成误差直接跳掉
+      sq: new Spring2(1, 1, { stiffness: 210, damping: 15, epsilon: 0.0004 }),
+      rot: new Spring(0, { stiffness: 200, damping: 13, epsilon: 0.01 }),
+    }
+    bodyPhys.set(card, b)
+  }
+  return b
+}
+
+function physicsTick(dt) {
+  let busy = false
+  bodyPhys.forEach((b, card) => {
+    if (card.classList.contains('dragging')) return // 拖起的那张由 dragTick 接管
+    let moving = false
+    ;[b.p.x, b.p.y, b.sq.x, b.sq.y, b.rot].forEach((s) => { if (!s.step(dt)) moving = true })
+    if (!moving) {
+      if (card.style.transform) { card.style.transform = ''; card.style.transformOrigin = '' }
+      return
+    }
+    busy = true
+    card.style.transformOrigin = 'center'
+    card.style.transform = `translate3d(${b.p.x.value}px, ${b.p.y.value}px, 0) scale(${b.sq.x.value}, ${b.sq.y.value}) rotate(${b.rot.value}deg)`
+  })
+  return busy
+}
+
+// 布局跳变：把旧位置当作“相对新静置位的偏移”交给弹簧回拉 —— 面板是被撞开的，有动量
 function flip(mutate) {
   const cards = [...document.querySelectorAll('#app-view .card')]
   if ($('app-view').classList.contains('hidden')) { mutate(); return }
   const first = new Map(cards.map((c) => [c, c.getBoundingClientRect()]))
   mutate()
-  const moved = []
+  void document.body.offsetHeight // 强制回流，否则新旧 rect 在同一帧内拿不到重排结果
+  let touched = false
   cards.forEach((c) => {
     if (c.classList.contains('dragging')) return
     const f = first.get(c)
     const l = c.getBoundingClientRect()
     const dx = f.left - l.left, dy = f.top - l.top
-    const sx = l.width ? f.width / l.width : 1, sy = l.height ? f.height / l.height : 1
-    if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) return
-    c.classList.remove('pushed')
-    c.style.transition = 'none' // Invert 帧必须无过渡，否则会从新位置反向动画到旧位置
-    c.style.transformOrigin = 'top left'
-    c.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`
-    moved.push(c)
+    const resized = l.width > 1 && (Math.abs(f.width - l.width) > 1 || Math.abs(f.height - l.height) > 1)
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && !resized) return
+    const b = physOf(c)
+    b.p.shift(dx, dy) // 保留原有速度：连续挤压会累积动量，越挤越“撞”
+    if (resized) {
+      b.sq.x.value = f.width / l.width
+      b.sq.y.value = f.height / l.height
+      b.sq.x.target = b.sq.y.target = 1
+    }
+    touched = true
   })
-  if (!moved.length) return
-  // 关键：强制一次回流把 Invert 帧提交给渲染器。
-  // 少了这一步，下一帧的清除会与本次赋值合并到同一次样式计算，挤让位动画根本不会播放。
-  void document.body.offsetHeight
-  requestAnimationFrame(() => {
-    moved.forEach((c) => {
-      c.style.transition = '' // 交还给 .card / .pushed 的过渡
-      c.classList.add('pushed')
-      c.style.transform = ''
-    })
-    setTimeout(() => moved.forEach((c) => {
-      c.classList.remove('pushed')
-      c.style.transformOrigin = ''
-    }), 520)
-  })
+  if (touched) Ticker.add(physicsTick)
 }
 
 function applyLayout() {
@@ -1091,79 +1118,129 @@ function homeOf(card) {
 
 function startDrag(card, e) {
   const r = card.getBoundingClientRect()
-  drag = { card, ox: r.left, oy: r.top, lastX: e.clientX, lastY: e.clientY, vx: 0, vy: 0, t: performance.now() }
+  const b = physOf(card)
+  b.p.snap(0, 0)
+  b.sq.snap(1, 1)
+  b.rot.snap(0) // 归零让位偏移，避免与拖拽变换叠加
+  drag = {
+    card,
+    w: r.width,
+    h: r.height,
+    ox: r.left,
+    oy: r.top,
+    sx: e.clientX,
+    sy: e.clientY,
+    follow: new Spring2(0, 0, { stiffness: 1050, damping: 48 }), // 很硬：几乎跟手，只留一点质量滞后
+    sq: new Spring2(1, 1, { stiffness: 300, damping: 13, epsilon: 0.0004 }),
+    rot: new Spring(0, { stiffness: 240, damping: 11, epsilon: 0.01 }),
+    tracker: new Tracker(),
+    tornAt: 0,
+  }
   ghost.style.height = `${r.height}px`
   card.parentNode.insertBefore(ghost, card)
   document.body.appendChild(card) // 移到 body，避免祖先 transform 影响 fixed 定位
   card.classList.add('dragging', 'torn')
   card.style.clipPath = tornPath()
-  drag.tornAt = performance.now()
   card.style.width = `${r.width}px`
   card.style.height = `${r.height}px`
   card.style.left = `${r.left}px`
   card.style.top = `${r.top}px`
+  drag.tracker.reset(e.clientX, e.clientY)
   moveDrag(e)
+  Ticker.add(dragTick)
 }
 
 function moveDrag(e) {
   if (!drag) return
-  const now = performance.now()
-  const dt = Math.max(8, now - drag.t)
-  drag.vx = (e.clientX - drag.lastX) / dt * 16
-  drag.vy = (e.clientY - drag.lastY) / dt * 16
-  drag.lastX = e.clientX; drag.lastY = e.clientY; drag.t = now
-  // 撕纸：边缘每 ~110ms 换一次毛边，看起来像纸被撕着走，而不是硬贴图
-  if (now - drag.tornAt > 110) {
-    drag.tornAt = now
-    drag.card.style.clipPath = tornPath(1.4)
-  }
-  // 果冻：用速度驱动拉伸/倾斜，松手自然回弹，不会生硬
-  const skew = clamp(drag.vx * 0.1, -5, 5)
-  const sy = clamp(1 + Math.abs(drag.vy) * 0.0014, 1, 1.05)
-  const sx = clamp(1 + Math.abs(drag.vx) * 0.001, 1, 1.04)
-  const tilt = clamp(drag.vx * 0.06, -2, 2)
-  drag.card.style.transform = `translate(${e.clientX - drag.ox}px, ${e.clientY - drag.oy}px) skewX(${skew}deg) scale(${sx}, ${sy}) rotate(${tilt}deg)`
+  const d = drag
+  d.tracker.push(e.clientX, e.clientY)
+  const area = $('app-view').getBoundingClientRect()
+  let tx = e.clientX - d.sx
+  let ty = e.clientY - d.sy
+  // 橡皮筋：卡片中心拖出可视区后越拉越沉，能拽出去一点但不会脱缰，也不会硬停在边界
+  const minTx = area.left + d.w * 0.4 - d.ox
+  const maxTx = area.right - d.w * 0.4 - d.ox
+  const minTy = area.top + d.h * 0.35 - d.oy
+  const maxTy = area.bottom - d.h * 0.35 - d.oy
+  if (tx < minTx) tx = minTx + rubber(tx - minTx, area.width * 0.6)
+  else if (tx > maxTx) tx = maxTx + rubber(tx - maxTx, area.width * 0.6)
+  if (ty < minTy) ty = minTy + rubber(ty - minTy, area.height * 0.6)
+  else if (ty > maxTy) ty = maxTy + rubber(ty - maxTy, area.height * 0.6)
+  d.follow.set(tx, ty)
+  Ticker.add(dragTick) // 手停一会儿后心跳会停摆，新的移动必须重新叫醒它
   insertGhost(e.clientX, e.clientY)
+}
+
+function dragTick(dt) {
+  if (!drag) return false
+  const d = drag
+  let moving = false
+  ;[d.follow.x, d.follow.y, d.sq.x, d.sq.y, d.rot].forEach((s) => { if (!s.step(dt)) moving = true })
+  // 形变与倾角取“手的即时速度”而不是弹簧速度：弹簧有滞后，跟手的那一下形变才够直接
+  const pvx = d.tracker.vx
+  const pvy = d.tracker.vy
+  d.sq.x.target = clamp(1 + Math.abs(pvy) * 0.00003, 1, 1.06)
+  d.sq.y.target = clamp(1 + Math.abs(pvx) * 0.00003, 1, 1.06)
+  d.rot.target = clamp(pvx * 0.0013, -3.2, 3.2)
+  const skew = clamp(pvx * 0.0026, -6, 6)
+  d.card.style.transform = `translate3d(${d.follow.x.value}px, ${d.follow.y.value}px, 0) skewX(${skew}deg) scale(${d.sq.x.value}, ${d.sq.y.value}) rotate(${d.rot.value}deg)`
+  const now = performance.now()
+  if (now - d.tornAt > 90) {
+    d.tornAt = now
+    d.card.style.clipPath = tornPath(clamp(0.5 + Math.hypot(pvx, pvy) * 0.0004, 0.5, 2.2)) // 毛边幅度随速度涨
+  }
+  return moving
+}
+
+// 毛边逐帧收敛后再恢复圆角，避免“啪”一下弹齐
+function settleTorn(card) {
+  card.style.clipPath = tornPath(0.8)
+  setTimeout(() => {
+    card.style.clipPath = tornPath(0.3)
+    setTimeout(() => {
+      card.style.clipPath = ''
+      card.classList.remove('torn')
+    }, 110)
+  }, 110)
 }
 
 function endDrag() {
   if (!drag) return
-  const { card } = drag
-  drag = null // 先释放，任何情况下都不允许重入
-  const from = card.getBoundingClientRect()
+  const d = drag
+  drag = null
+  Ticker.remove(dragTick)
+  const card = d.card
+  const others = [...document.querySelectorAll('#app-view .card')]
+  const before = new Map(others.map((c) => [c, c.getBoundingClientRect()]))
+  const from = card.getBoundingClientRect() // 浮起中的屏幕位置（含 transform）
   const parent = ghost.parentNode || homeOf(card)
   const ref = ghost.parentNode === parent ? ghost : null
-  // 先把“浮起”状态无条件清干净：宁可少一段动画，也不能留下卡在 body 上、
-  // 带 fixed 定位与固定宽高的面板——那正是“两个面板占同一位置”的成因
+  // 无条件先清掉“浮起”状态：宁可少一段动画，也不能留下卡在 body 上带 fixed 定位的面板
   card.classList.remove('dragging')
   card.style.width = card.style.height = card.style.left = card.style.top = ''
-  flip(() => { parent.insertBefore(card, ref); if (ghost.parentNode) ghost.remove() })
+  card.style.transform = ''
+  parent.insertBefore(card, ref)
+  if (ghost.parentNode) ghost.remove()
   document.querySelectorAll('.col.dropping').forEach((c) => c.classList.remove('dropping'))
+  void document.body.offsetHeight
   try {
-    // 毛边逐帧收敛后再恢复圆角，避免“啪”一下弹齐
-    card.style.clipPath = tornPath(0.7)
-    setTimeout(() => {
-      card.style.clipPath = tornPath(0.25)
-      setTimeout(() => {
-        card.style.clipPath = ''
-        card.classList.remove('torn')
-      }, 90)
-    }, 90)
     const to = card.getBoundingClientRect()
-    card.style.transformOrigin = 'top left'
-    card.style.transition = 'none'
-    card.style.transform = `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`
-    void document.body.offsetHeight // 同 flip：不强制回流则倒放帧被合并，落位动画看不到
-    requestAnimationFrame(() => {
-      card.style.transition = 'transform .38s cubic-bezier(.22,1,.36,1)'
-      card.style.transform = ''
-      setTimeout(() => {
-        card.style.transition = card.style.transformOrigin = ''
-        card.classList.add('settle') // 落位果冻回弹
-        setTimeout(() => card.classList.remove('settle'), 660)
-      }, 390)
+    const b = physOf(card)
+    b.p.snap(from.left - to.left, from.top - to.top) // 从当前视觉位置继续，不跳位
+    b.p.set(0, 0)
+    b.p.kick(d.follow.x.vel, d.follow.y.vel) // 惯性甩出：松手瞬间卡片自身的动量决定过冲幅度
+    b.sq.snap(d.sq.x.value, d.sq.y.value)
+    b.sq.set(1, 1)
+    b.rot.snap(d.rot.value)
+    b.rot.target = 0
+    settleTorn(card)
+    others.forEach((c) => {
+      const f = before.get(c)
+      const l = c.getBoundingClientRect()
+      physOf(c).p.shift(f.left - l.left, f.top - l.top) // 邻居同样用弹簧接位
     })
-  } catch { /* 动画出错不影响布局已复原 */ }
+    Ticker.add(physicsTick)
+  } catch { /* 动画出错也不影响布局已复原 */ }
   readLayout()
   saveLayout()
 }
@@ -1207,7 +1284,7 @@ function makeDraggable(card) {
 // 兜底：上一轮拖拽若被打断，卡片可能残留在 body 上并带着内联定位/尺寸
 document.querySelectorAll('body > .card').forEach((c) => {
   homeOf(c).appendChild(c)
-  c.classList.remove('dragging', 'torn', 'settle', 'pushed')
+  c.classList.remove('dragging', 'torn')
   c.style.cssText = ''
 })
 document.querySelectorAll('#app-view .card').forEach(makeDraggable)

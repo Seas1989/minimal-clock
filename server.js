@@ -2,6 +2,7 @@ const http = require('http')
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
+const { Store } = require('./lib/store')
 
 const PORT = process.env.PORT || 3000
 const PUBLIC_DIR = path.join(__dirname, 'public')
@@ -31,24 +32,27 @@ const MIME = {
   '.ico': 'image/x-icon',
 }
 
-/* ---------- 存储 ---------- */
+/* ---------- 存储 ----------
+ * 内存里的数组是唯一真源（lib/store.js）：
+ *   - 接口中的“取列表 -> 改 -> 落盘”全在同步代码里完成，并发请求不会互相覆盖
+ *   - 落盘是原子的（.tmp + fsync + 改名），并且自动留 .bak，重启不丢账号
+ * 旧写法 loadUsers()/saveUsers(x) 保留语义：load 拿到的是同一份内存引用，
+ * save 只是把当前内存快照原子写回磁盘。
+ */
 
-function loadJSON(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
-    return []
-  }
-}
-function saveJSON(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8')
-}
-const loadTasks = () => loadJSON(DATA_FILE)
-const saveTasks = (t) => saveJSON(DATA_FILE, t)
-const loadUsers = () => loadJSON(USERS_FILE)
-const saveUsers = (u) => saveJSON(USERS_FILE, u)
-const loadFriends = () => loadJSON(FRIENDS_FILE)
-const saveFriends = (f) => saveJSON(FRIENDS_FILE, f)
+const usersStore = new Store(USERS_FILE, {
+  // 字段不全的记录（多半是早期写坏留下的）不进内存，避免登录逻辑踩空
+  validate: (u) => u && u.id && u.username && u.salt && u.hash,
+})
+const tasksStore = new Store(DATA_FILE)
+const friendsStore = new Store(FRIENDS_FILE)
+
+const loadUsers = () => usersStore.data
+const loadTasks = () => tasksStore.data
+const loadFriends = () => friendsStore.data
+const saveUsers = () => usersStore.save()
+const saveTasks = () => tasksStore.save()
+const saveFriends = () => friendsStore.save()
 
 // 已接受好友关系的对方用户 id
 function friendIdsOf(userId, rels = loadFriends()) {
@@ -394,13 +398,41 @@ function serveStatic(req, res, pathname) {
 
 /* ---------- 服务 ---------- */
 
-http.createServer((req, res) => {
+// 启动自检：把三份数据的现状读一遍，有损坏时日志会直接说出“从哪个文件恢复了什么”
+function selfCheck() {
+  const rows = [usersStore, tasksStore, friendsStore].map((s) => {
+    const { name, count, notes } = s.info()
+    return `${name} ${count} 条${notes.length ? '（' + notes.join('，') + '）' : ''}`
+  })
+  console.log('[store] 数据自检：' + rows.join(' | '))
+}
+
+const server = http.createServer((req, res) => {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`)
   if (pathname.startsWith('/api/')) {
     handleAPI(req, res, pathname).catch((e) => sendJSON(res, 400, { error: e.message }))
   } else {
     serveStatic(req, res, pathname)
   }
-}).listen(PORT, () => {
-  console.log(`⏳ 时钟已启动：http://localhost:${PORT}`)
 })
+
+server.listen(PORT, () => {
+  selfCheck()
+  console.log(`⏳ 时钟已启动：http://localhost:${PORT}`)
+  console.log(`   数据目录：${DATA_DIR}`)
+})
+
+// 所有写盘都是同步完成的，退出时只需保证不留 .tmp 干扰下次启动
+function shutdown() {
+  try {
+    // 半截临时文件没有价值，主文件与 .bak 仍然完好
+    fs.readdirSync(DATA_DIR)
+      .filter((f) => f.endsWith('.tmp'))
+      .forEach((f) => fs.rmSync(path.join(DATA_DIR, f)))
+  } catch { /* 清理失败不影响退出 */ }
+  server.close(() => process.exit(0))
+  setTimeout(() => process.exit(0), 1500).unref()
+}
+
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)

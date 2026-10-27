@@ -87,7 +87,7 @@ header .link-btn:hover { color: var(--fg-out); }
   border-radius: 20px;
   padding: 28px;
   position: relative;
-  transition: box-shadow 0.25s, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: box-shadow 0.25s;
 }
 #task-list { max-height: 46vh; overflow-y: auto; }
 
@@ -146,18 +146,8 @@ header .link-btn:hover { color: var(--fg-out); }
   to { opacity: 1; transform: none; }
 }
 
-/* 落下：果冻回弹 */
-.card.settle { animation: jelly 0.62s cubic-bezier(0.34, 1.56, 0.64, 1); }
-@keyframes jelly {
-  0%   { transform: scale(1.06, 0.92) rotate(0.6deg); }
-  26%  { transform: scale(0.94, 1.07) rotate(-0.5deg); }
-  52%  { transform: scale(1.03, 0.97) rotate(0.22deg); }
-  76%  { transform: scale(0.99, 1.015); }
-  100% { transform: none; }
-}
-
-/* 被挤让位的卡片：弹性回位（JS 会先关掉过渡写倒放量，再恢复过渡释出） */
-.card.pushed { transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
+/* 落位与让位的形变全部由 physics.js 的弹簧逐帧写 transform，
+ * 这里绝不能再给 .card 加 transform 过渡：两层动画叠在一起会把弹簧积分糊成一团。 */
 
 /* 列宽拖动条 */
 .col-resizer {
