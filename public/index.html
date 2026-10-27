@@ -174,6 +174,21 @@
     </div>
   </div>
 
+  <!-- 休息：正计时暂停后进入，倒计时结束自动续上刚才的任务 -->
+  <div id="rest" class="focus hidden">
+    <div class="focus-inner">
+      <div id="rest-title" class="focus-name">休息一下</div>
+      <div id="rest-time" class="focus-time">05:00</div>
+      <div id="rest-sub" class="focus-sub"></div>
+      <div class="focus-bar"><i id="rest-fill"></i></div>
+      <div class="btn-row">
+        <button id="btn-rest-add" class="ghost-btn">＋1 分钟</button>
+        <button id="btn-rest-end" class="ctrl-btn solid">结束休息</button>
+      </div>
+      <label class="bg-slider" id="rest-len-row">下次休息<input type="range" id="rest-len" min="1" max="30" step="1" value="5"><span id="rest-len-text" class="bg-tip"></span></label>
+    </div>
+  </div>
+
   <!-- 通用确认弹窗 -->
   <div id="confirm-modal" class="modal hidden">
     <div class="modal-box small">

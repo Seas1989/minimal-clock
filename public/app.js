@@ -545,6 +545,8 @@ function logout() {
   friends = { friends: [], incoming: [], outgoing: [] }
   challenges = []
   selectedId = null
+  // 退出登录只收起休息层：走 endRest 会顺手替用户 resume，可 token 已经没了
+  if (rest) { rest = null; $('rest').classList.add('hidden') }
   if (focusId) exitFocus()
   showView(false)
 }
@@ -584,6 +586,9 @@ async function act(id, action) {
   try {
     await api(`/api/tasks/${id}/action`, { method: 'POST', body: JSON.stringify({ action }) })
     await refresh()
+    // 暂停入口有三处（控制面板 / 任务行 / 空格），询问休息只放在 act 里，一处也不会漏
+    const t = tasks.find((x) => x.id === id)
+    if (action === 'pause' && t && t.type === 'stopwatch' && !rest) askRest(t)
   } catch (e) { toast(e.message) }
 }
 
@@ -968,13 +973,13 @@ function renderChallengeInvite(c) {
     return
   }
   if (!c.isOwner) return
-  const rest = friends.friends.filter((f) => !c.members.some((m) => m.user === f.id))
-  if (!rest.length) return
+  const others = friends.friends.filter((f) => !c.members.some((m) => m.user === f.id))
+  if (!others.length) return
   const tip = document.createElement('div')
   tip.className = 'bg-tip'
   tip.textContent = '再邀请：'
   box.appendChild(tip)
-  rest.forEach((f) => {
+  others.forEach((f) => {
     const waiting = c.pending.some((p) => p.user === f.id)
     const on = challengePick.has(f.id)
     const chip = document.createElement('button')
@@ -1087,7 +1092,11 @@ function controlButtons(box, t) {
   box.innerHTML = ''
   if (t.status === 'stopped') controlBtn(box, '开始', () => act(t.id, 'start'), true)
   else if (t.status === 'running') controlBtn(box, '暂停', () => act(t.id, 'pause'), true)
-  else if (t.status === 'paused') controlBtn(box, '继续', () => act(t.id, 'resume'), true)
+  else if (t.status === 'paused') {
+    controlBtn(box, '继续', () => act(t.id, 'resume'), true)
+    // 之前选了“不休息”，也得有地方能手动开始休息
+    if (t.type === 'stopwatch' && !rest) controlBtn(box, '休息', () => startRest(t.id))
+  }
   if (t.status !== 'stopped') {
     controlBtn(box, '重置', () => act(t.id, 'reset'))
     controlBtn(box, '完成', () => act(t.id, 'complete'))
@@ -1363,6 +1372,70 @@ function tickFocus() {
 
 $('btn-focus-exit').onclick = exitFocus
 
+/* ---------- 休息：正计时暂停后问一句，倒计时走完了自动续上刚才的任务 ---------- */
+
+let rest = null // { endAt, taskId }：纯前端状态，刷不刷页面不影响任务自己的计时
+const restMins = () => clamp(lsNum('restMin', 5), 1, 30)
+
+async function askRest(t) {
+  const mins = restMins()
+  if (!await confirmAction(`「${t.name}」已跑 ${fmtElapsed(liveElapsed(t))}，休息 ${mins} 分钟？结束时会自动继续计时。`)) return
+  startRest(t.id)
+}
+
+function startRest(taskId) {
+  rest = { endAt: serverNow() + restMins() * 6e4, taskId, total: restMins() * 6e4 }
+  $('rest').classList.remove('hidden')
+  renderRest()
+  if (typeof musicAutoplay === 'function') musicAutoplay() // 休息开始就放音乐（M6 接入后生效）
+}
+
+// auto=true 是倒计时走完，否则是手动提前结束
+function endRest(auto) {
+  const r = rest
+  rest = null
+  $('rest').classList.add('hidden')
+  if (!r) return
+  if (typeof musicPause === 'function') musicPause()
+  if (auto) { beep(); toast('休息结束，已继续计时') }
+  else toast('已提前结束休息')
+  const t = tasks.find((x) => x.id === r.taskId)
+  // 只接回“确实因为休息而暂停”的任务，用户中途点了重置/完成就不去动它
+  if (t && t.status === 'paused') act(r.taskId, 'resume')
+}
+
+function renderRest() {
+  if (!rest) return
+  const left = Math.max(0, rest.endAt - serverNow())
+  $('rest-time').textContent = fmtElapsed(left)
+  $('rest-fill').style.width = `${(100 * (1 - left / Math.max(1, rest.total))).toFixed(2)}%`
+  const t = tasks.find((x) => x.id === rest.taskId)
+  $('rest-sub').textContent = t ? `休息结束后继续「${t.name}」` : '休息结束后回列表选任务'
+  if (left <= 0) endRest(true)
+}
+
+$('btn-rest-add').onclick = () => {
+  if (!rest) return
+  rest.endAt += 6e4
+  rest.total += 6e4 // 进度条跟着重新算，否则加了时长反而看起来“快完了”
+  renderRest()
+}
+$('btn-rest-end').onclick = () => endRest(false)
+
+function syncRestLenText() { $('rest-len-text').textContent = `${restMins()} 分钟` }
+$('rest-len').value = restMins()
+syncRestLenText()
+$('rest-len').addEventListener('input', () => {
+  localStorage.setItem('restMin', $('rest-len').value)
+  syncRestLenText()
+  if (rest) { // 正在休息时改滑块：按新时长重算剩下的，比“多出的分钟数”直观
+    const total = restMins() * 6e4
+    rest.endAt = serverNow() + total
+    rest.total = total
+    renderRest()
+  }
+})
+
 /* ---------- 标签页 ---------- */
 
 function setMode(m, persist = true) {
@@ -1389,8 +1462,9 @@ document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase()
   if (tag === 'input' || tag === 'select' || tag === 'textarea') return
   if (e.key === 'Escape') {
-    // 一层层退出：确认框 > 专注 > 挑战详情 > 发起挑战弹窗，不能一上来就把专注关掉
+    // 一层层退出：确认框 > 休息 > 专注 > 挑战详情 > 发起挑战弹窗，不能一上来就把专注关掉
     if (!$('confirm-modal').classList.contains('hidden')) { closeConfirm(false); return }
+    if (rest) { endRest(false); return }
     if (focusId) { exitFocus(); return }
     if (!$('challenge-modal').classList.contains('hidden')) { closeChallenge(); return }
     closeShare()
@@ -1794,7 +1868,7 @@ async function syncTime() {
 }
 
 setInterval(() => {
-  if (token) { tickDisplay(); tickTaskTimes(); checkCompletion() }
+  if (token) { tickDisplay(); tickTaskTimes(); checkCompletion(); renderRest() }
 }, 250)
 
 setInterval(() => { if (token) { refresh(); loadFriends(); loadChallenges() } }, 5000) // 定期与后端同步

@@ -463,6 +463,9 @@ select {
   overflow: hidden;
 }
 .focus-bar > i { display: block; height: 100%; width: 0; background: var(--fg); transition: width 0.25s linear; }
+#rest-len-row { width: 100%; max-width: 320px; }
+/* 确认框要盖在专注/休息层之上：在专注里点暂停，问“要不要休息”的弹窗就在这一层 */
+#confirm-modal { z-index: 50; }
 
 /* ---------- 同任务挑战 ---------- */
 
