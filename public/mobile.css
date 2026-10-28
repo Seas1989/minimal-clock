@@ -1,0 +1,282 @@
+/* ============================================================
+ * mobile.css —— 手机端外壳：整屏一页一个事，页面不滚
+ *
+ * 加载方式：<link rel="stylesheet" href="mobile.css" media="(max-width: 760px)">
+ * 所以桌面浏览器不会解析这个文件，这里头不再套一层 @media。
+ *
+ * 所有规则都挂在 body.mobile 上（app.js 由 matchMedia('(max-width: 760px)') 打这个类）。
+ * 两层保险各管一半：
+ *   - media 属性挡住桌面，避免万一 JS 没跑起来时桌面被误改；
+ *   - body.mobile 挡住「JS 挂了 / Alpine 没加载」的情况：这时没有 mobile 类，
+ *     页面退回 style.css 里那套「单栏 + 整页滚动」的老手机布局，功能照常可用。
+ * 视图切换只认 body[data-view="…"]，这个属性由 Alpine 的 :data-view 绑定写入；
+ * Alpine 缺席时 app.js 用同一套属性兜底，所以这里的显隐规则不依赖框架。
+ * ============================================================ */
+
+/* ---------- 一屏锁死：document 绝不产生滚动条 ---------- */
+body.mobile {
+  height: 100vh;
+  height: 100dvh;   /* 手机地址栏收放时 100vh 会算错 */
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;   /* 拖到底不触发下拉刷新 / 回弹，看着才像原生 App */
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶栏收成一条：☰ + 标题（非主页时是「← 时钟」，点它回主页）+ 主题色圆点。
+ * 其余文字入口（布局 / 背景 / 听歌 / 音乐 / 用户名 / 退出）一律收进抽屉，
+ * 两行顶栏在 5 寸屏上会吃掉表盘的高度 */
+body.mobile header {
+  flex: 0 0 auto;
+  max-width: none;
+  width: 100%;
+  margin: 0;   /* 桌面那条 margin:0 auto 在 body 变成 flex 列之后会让宽度变成 fit-content（auto 交叉边距 = 不再拉伸） */
+  padding: calc(6px + env(safe-area-inset-top)) 12px 6px;
+  row-gap: 4px;
+  column-gap: 8px;
+}
+body.mobile #btn-menu { display: block; font-size: 20px; padding: 2px 8px; line-height: 1.2; }
+body.mobile h1 { font-size: 15px; letter-spacing: 2px; cursor: pointer; white-space: nowrap; }
+body.mobile .header-right { flex: 1 1 auto; justify-content: flex-end; gap: 8px 12px; }
+body.mobile #btn-layout,
+body.mobile #btn-bg,
+body.mobile #btn-listen,
+body.mobile #btn-music,
+body.mobile #user-box { display: none; }
+body.mobile #theme-picker { gap: 10px; }
+body.mobile .theme-dot { width: 22px; height: 22px; }
+
+/* ---------- 主视图：四张卡片叠成同一屏，只显示当前那一页 ---------- */
+body.mobile #app-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;        /* 同上：留着 margin:0 auto 会让这一层被缩成 fit-content，里面的 absolute 卡片跟着坍到 0 宽 */
+  display: block;
+  position: relative;   /* 卡片 absolute 铺满这一层，高度由 flex 分配，不用算 header 高度 */
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+/* 两列结构在手机上没有意义：让列容器从盒模型里消失，卡片直接归 #app-view 管 */
+body.mobile #app-view .col { display: contents; }
+body.mobile #app-view .col-resizer { display: none; }
+
+body.mobile .card[data-panel] {
+  position: absolute;
+  inset: 6px 8px 6px;
+  margin: 0;
+  display: none;
+  flex-direction: column;
+  padding: 18px 14px calc(24px + env(safe-area-inset-bottom));
+  border-radius: 18px;
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow-y: auto;         /* 「内部可滚」的落点：滚动条只出现在这一页里 */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+/* 手机上不给拖拽热区：留着一圈透明热区只会让"点卡片内容"变成误抓卡片 */
+body.mobile .card .edge,
+body.mobile .card .grip { display: none; }
+
+/* 没有 data-view（Alpine 未就绪、JS 出错）时至少看得见时钟，而不是整屏空白 */
+body.mobile #panel-display { display: flex; }
+body.mobile #panel-tasks,
+body.mobile #panel-friends,
+body.mobile #panel-challenges { display: none; }
+
+body.mobile[data-view="tasks"] #panel-display,
+body.mobile[data-view="friends"] #panel-display,
+body.mobile[data-view="challenges"] #panel-display { display: none; }
+body.mobile[data-view="tasks"] #panel-tasks,
+body.mobile[data-view="friends"] #panel-friends,
+body.mobile[data-view="challenges"] #panel-challenges { display: flex; }
+
+/* 时钟那一页要「刚好一屏」：表盘跟着视口缩，其余控件压紧凑，正常机型不会触发滚动。
+ * 极矮屏（横屏、折叠屏外屏）仍然允许这一页自己滚，宁可滚也不能看不见 */
+/* 内容只占上半截、下面空一大片很难看：整坨垂直居中。
+ * 第二条用 safe center：内容真超一屏时退回顶部对齐，不然表盘上半截会被裁到滚不到（flex 居中的经典坑）；
+ * 不认 safe 关键字的浏览器会整条丢弃，留下上一行的 center，同样居中 */
+body.mobile #panel-display { justify-content: center; }
+@supports (justify-content: safe center) {
+  body.mobile #panel-display { justify-content: safe center; }
+}
+body.mobile #tabs { margin-bottom: 10px; gap: 6px; }
+body.mobile .tab { padding: 7px 12px; font-size: 13px; }
+/* 表盘同时受宽与高约束：只按 vw 算，高屏上表盘只有 160px、下面留一大块空白 */
+body.mobile .dial { width: clamp(150px, min(56vw, 30vh), 260px); margin: 0 auto; }
+body.mobile .dock { margin: 2px 0 8px; gap: 6px; }
+body.mobile .twin { flex: 1 1 calc(50% - 6px); padding: 7px 8px; }
+body.mobile .panel { margin-top: 12px; }
+body.mobile #timer-controls { gap: 8px; }
+body.mobile #timer-controls .ctrl-btn,
+body.mobile #timer-controls .ghost-btn { padding: 9px 16px; }
+body.mobile .new-task { margin-top: 12px; gap: 8px; }
+body.mobile .today-strip { margin-top: 14px; }
+body.mobile h2 { margin-bottom: 12px; }
+
+/* 列表页里的行：拇指点得到才算适配（原来那些 2px 4px 的小按钮在手机上按不准） */
+body.mobile .task-item { padding: 13px 0; }
+body.mobile .icon-btn { padding: 7px 9px; font-size: 17px; }
+body.mobile .card .link-btn { font-size: 14px; padding: 8px 10px; }   /* miniBtn 生成的行内小按钮（▸ ↗ ▢ ⌫ 这类文字入口） */
+body.mobile .friend-item { padding: 12px 0; }
+body.mobile .rank-row { padding: 11px 0; }
+body.mobile .like-btn { padding: 8px 14px; }
+body.mobile #task-list { max-height: none; overflow: visible; }   /* 不再嵌一层滚动，整页滚 */
+
+/* ---------- 抽屉：整屏九宫格（顶栏 ☰ 点开） ---------- */
+body.mobile[data-drawer="open"] .drawer {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  inset: 0;
+  z-index: 40;   /* 盖住弹层(10)、专注(20)、播放条(25)，但让确认框(50)压在它上面 */
+  background: var(--bg);
+  animation: drawerIn 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@keyframes drawerIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.drawer-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: calc(16px + env(safe-area-inset-top)) 18px 4px;
+}
+.drawer-brand { font-size: 15px; letter-spacing: 4px; color: var(--fg-out); }
+.drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  padding: 18px 18px 0;
+}
+.drawer-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-height: 78px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--fg);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.drawer-cell b { font-size: 20px; font-weight: 400; line-height: 1; color: var(--fg-weak); }
+.drawer-cell span { font-size: 14px; letter-spacing: 1px; }
+.drawer-cell.on { border-color: var(--fg); box-shadow: inset 0 0 0 1px var(--fg); }
+.drawer-cell.on b { color: var(--fg); }
+.drawer-tip {
+  margin-top: auto;
+  padding: 20px 20px 12px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--fg-weak);
+}
+
+/* ---------- 弹层改成全屏 sheet ----------
+ * 滚动仍然交给外层 .modal（桌面就是这套机制：fixed + overflow-y:auto + .modal-box{margin:auto}，
+ * 内容高于视口时也能滚到顶）。这里只把 box 拉到满屏、圆角与投影抹平，
+ * 再把「完成 / 关闭」那一排吸在底部：满屏 sheet 里点不到背景关闭，每个弹层底部都有按钮 */
+body.mobile .modal { padding: 0; }
+body.mobile .modal-box {
+  width: 100%;
+  max-width: none;
+  border-radius: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 18px 16px calc(20px + env(safe-area-inset-bottom));
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+}
+/* 操作条吸在底部：滚到哪儿都点得到，不必先滚回结尾 */
+body.mobile .modal-actions {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: 12px 0 2px;
+  background: var(--bg);
+}
+/* 播放条（z-index 25）本来就压在弹层（10）之上，手机上让它继续露着：
+ * 边挑歌边听是常见操作。代价是吸底的按钮必须抬高一条，并把 sheet 末尾的空白留够 */
+body.mobile.has-player .modal-actions { bottom: calc(112px + env(safe-area-inset-bottom)); }
+body.mobile.has-player .modal-box { padding-bottom: calc(132px + env(safe-area-inset-bottom)); }
+body.mobile .music-list { max-height: none; overflow: visible; }   /* sheet 已经在滚，别再套一层 */
+body.mobile .queue-list { max-height: none; }
+body.mobile .bg-preview { height: 150px; }
+body.mobile .layout-tip { margin: 8px 0 14px; }
+/* 窄屏老规则给 .layout-tip 追加的那句「捏住边框上下换位」在手机上不成立（这里根本不给拖拽），
+ * 而 .layout-tip 这个类音乐弹层也在用 —— 一律去掉，别把错的话塞进别的弹层 */
+body.mobile .layout-tip::after { content: none; }
+
+/* 确认框是唯一保持小框居中的弹层：它只有一句话，满屏反而找不到按钮 */
+body.mobile #confirm-modal { padding: 24px 18px; overflow-y: auto; }
+body.mobile #confirm-modal .modal-box {
+  min-height: 0;
+  margin: auto;
+  max-width: 360px;
+  border-radius: 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  overflow: visible;
+}
+
+/* ---------- 播放条与队列 ---------- */
+/* 手机上播放条整宽贴着底（原本靠 transform 居中，窄屏那样两边各留一大截空白很浪费） */
+body.mobile .player {
+  left: 0;
+  right: 0;
+  width: auto;
+  transform: none;
+  bottom: 0;
+  padding: 0 8px calc(8px + env(safe-area-inset-bottom));
+}
+body.mobile .player-inner { gap: 6px 8px; padding: 8px 10px; }
+body.mobile .player-btns .ctrl-btn { flex: 0 0 auto; }
+body.mobile .player-main { flex: 1 1 100%; }
+/* 卡片内滚到底要给播放条让出高度，否则最后一行会被压在条子底下 */
+body.mobile.has-player .card[data-panel] { padding-bottom: 116px; }
+body.mobile.has-player #app-view { padding-bottom: 0; }
+body.mobile.has-player .toast { bottom: calc(124px + env(safe-area-inset-bottom)); }
+body.mobile.has-player .focus { padding-bottom: calc(124px + env(safe-area-inset-bottom)); }   /* 休息层居中的那坨会被播放条压住 */
+
+/* 队列面板：不脱离文档流，就贴在播放条上方把 .player 往上顶（和桌面同一个路子）。
+ * 之前写成 position:fixed 会盖住 ⏮ ▶ ⏭ —— 列表开着就切不了歌 */
+body.mobile .queue-pop {
+  height: 70vh;
+  height: 70dvh;
+  max-height: none;   /* 桌面那条 min(46vh, 380px) 会把这里的 70dvh 卡在 380px */
+  margin-bottom: 8px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  animation: drawerIn 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+body.mobile .queue-title { flex: 0 0 auto; }
+body.mobile .queue-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+body.mobile .queue-row { padding: 12px 0; }
+
+/* ---------- 登录页：同样不整页滚 ---------- */
+body.mobile #auth-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: center;
+  padding: 0 16px;
+}
+body.mobile .auth-card { padding: 24px 20px; }
+body.mobile .auth-card input,
+body.mobile .auth-card .ctrl-btn { padding: 12px 16px; }
+
+/* ---------- 专注 / 休息层：本来就整屏，只把字号收到不超出窄屏 ---------- */
+body.mobile .focus { padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+body.mobile .focus-inner { gap: 12px; }
+body.mobile .focus-time { font-size: clamp(40px, 16vw, 84px); }
+body.mobile #rest-len-row { max-width: 100%; }

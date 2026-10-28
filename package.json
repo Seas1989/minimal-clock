@@ -1,7 +1,7 @@
 {
   "name": "minimal-clock",
-  "version": "1.3.0",
-  "description": "零依赖极简时钟：倒计时 / 正计时 / 当前时间，多任务多窗口、同任务挑战、休息时放网易云或 QQ 音乐、自定义背景与可拖拽面板布局",
+  "version": "1.4.0",
+  "description": "零依赖极简时钟：倒计时 / 正计时 / 当前时间，多任务多窗口、同任务挑战、休息时放网易云或 QQ 音乐、自定义背景与可拖拽面板布局，手机端整屏形态（汉堡抽屉 + 全屏视图 + 页面不滚）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -16,7 +16,8 @@
     "timer",
     "pomodoro",
     "zero-dependency",
-    "spring-physics"
+    "spring-physics",
+    "responsive"
   ],
   "license": "MIT",
   "private": true

@@ -5,11 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>时钟</title>
   <link rel="stylesheet" href="style.css">
+  <!-- 手机端外壳样式：带上 media，桌面上浏览器根本不解析它 -->
+  <link rel="stylesheet" href="mobile.css" media="(max-width: 760px)">
 </head>
-<body>
+<body x-data="shell()" :data-view="view" :data-drawer="drawer ? 'open' : ''">
   <div id="bg-layer" class="hidden"><img id="bg-img" alt=""></div>
   <header>
-    <h1>时钟</h1>
+    <div class="head-left">
+      <button id="btn-menu" class="link-btn" @click="toggleDrawer()" aria-label="菜单">☰</button>
+      <h1 id="brand" @click="go('display')" x-text="headTitle">时钟</h1>
+    </div>
     <div class="header-right">
       <button id="btn-layout" class="link-btn">布局</button>
       <button id="btn-bg" class="link-btn">背景</button>
@@ -22,6 +27,25 @@
       </span>
     </div>
   </header>
+
+  <!-- 手机端导航：整屏抽屉（顶栏 ☰ 点开）。入口用 data-* 标出，Alpine 在时走 @click，CDN 不通时 app.js 里用同一批 data-* 补上原生绑定 -->
+  <div id="drawer" class="drawer">
+    <div class="drawer-top">
+      <span class="drawer-brand">时钟</span>
+      <button id="btn-drawer-close" class="ghost-btn tiny" @click="closeDrawer()">✕</button>
+    </div>
+    <div class="drawer-grid">
+      <button class="drawer-cell" data-goto="display" :class="{ on: view === 'display' }" @click="go('display')"><b>⏱</b><span>时钟</span></button>
+      <button class="drawer-cell" data-goto="tasks" :class="{ on: view === 'tasks' }" @click="go('tasks')"><b>☑</b><span>任务列表</span></button>
+      <button class="drawer-cell" data-goto="friends" :class="{ on: view === 'friends' }" @click="go('friends')"><b>◎</b><span>好友</span></button>
+      <button class="drawer-cell" data-goto="challenges" :class="{ on: view === 'challenges' }" @click="go('challenges')"><b>⚑</b><span>同任务挑战</span></button>
+      <button class="drawer-cell" data-sheet="music" @click="sheet('music')"><b>♪</b><span>音乐</span></button>
+      <button class="drawer-cell" data-sheet="bg" @click="sheet('bg')"><b>▣</b><span>背景美化</span></button>
+      <button class="drawer-cell" data-act="listen" @click="listenToggle()"><b id="drawer-listen-icon">▶</b><span id="drawer-listen-text">听歌</span></button>
+      <button class="drawer-cell" data-act="logout" @click="leave()"><b>⏻</b><span id="drawer-user-text">退出登录</span></button>
+    </div>
+    <p class="drawer-tip">手机上是整屏一页一个事：页面不滚，列表在自己那页里滚。想回到时钟，点左上角的标题。</p>
+  </div>
 
   <!-- 登录 / 注册 -->
   <main id="auth-view" class="auth-view hidden">
@@ -338,5 +362,9 @@
 
   <script src="physics.js"></script>
   <script src="app.js"></script>
+  <!-- 手机端外壳的状态机：项目里唯一一处第三方运行时代码。defer 保证 app.js 先跑完（shell() 已定义）；
+       CDN 不通时 Alpine 不会就绪，app.js 里同一批 data-* 入口会退回原生点击绑定，功能不瘫 -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"
+    onerror="window.__noAlpine = 1"></script>
 </body>
 </html>

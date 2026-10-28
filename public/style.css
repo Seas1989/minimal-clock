@@ -302,6 +302,11 @@ h2 {
 
 .empty-tip { color: var(--fg-weak); font-size: 14px; text-align: center; padding: 20px 0; }
 
+/* ---------- 顶标左侧（汉堡 + 标题）与手机端抽屉：桌面上两者都不占位 ---------- */
+.head-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+#btn-menu { display: none; }
+.drawer { display: none; }
+
 /* ---------- 顶栏用户区 ---------- */
 
 .header-right { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; row-gap: 12px; }
