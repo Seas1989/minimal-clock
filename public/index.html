@@ -215,6 +215,7 @@
         <input type="text" id="music-q" maxlength="40" placeholder="歌名或歌单名，回车搜索">
         <button id="btn-music-search" class="ghost-btn small">搜索</button>
       </div>
+      <p class="bg-tip">搜单曲：「播放」把搜到的这批一起连播，「＋」加进当前队列；播放条上 ☰ 能看队列、点谁播谁。</p>
       <div id="music-result" class="music-list"></div>
       <label class="bg-slider">音量<input type="range" id="music-vol" min="0" max="100" step="5" value="60"><span id="music-vol-text" class="bg-tip"></span></label>
       <details id="music-help" class="music-help">
@@ -300,18 +301,25 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <!-- 播放条：任何界面都能听（顶栏 ▶ 听歌 / 音乐弹窗里的队列），进休息时才会自动接上 -->
+  <!-- 播放条：任何界面都能听（顶栏 ▶ 听歌 / M 键 / 音乐弹窗），进休息时才会自动接上 -->
   <div id="player" class="player hidden">
+    <!-- 队列面板：搜到的单曲、手动加的歌都在这里，点谁播谁、能单删 -->
+    <div id="queue-pop" class="queue-pop hidden">
+      <div id="queue-title" class="queue-title"></div>
+      <div id="queue-list" class="queue-list"></div>
+    </div>
     <div class="player-inner">
       <div class="player-main">
         <div id="rm-title" class="rm-title"></div>
         <div id="rm-sub" class="rm-sub"></div>
       </div>
       <div class="player-btns">
+        <button id="btn-rm-queue" class="ghost-btn tiny" title="播放队列">☰</button>
         <button id="btn-rm-prev" class="ghost-btn small" title="上一首">⏮</button>
         <button id="btn-rm-toggle" class="ctrl-btn solid">▶</button>
         <button id="btn-rm-next" class="ghost-btn small" title="下一首">⏭</button>
-        <button id="btn-rm-close" class="ghost-btn small" title="停止并收起">✕</button>
+        <button id="btn-rm-mode" class="ghost-btn tiny" title="播放方式：顺序 / 随机 / 单曲循环">🔁</button>
+        <button id="btn-rm-close" class="ghost-btn tiny" title="停止并收起">✕</button>
       </div>
       <div class="player-bar" id="rm-bar" title="点一下拖到那个位置"><i id="rm-fill"></i></div>
     </div>

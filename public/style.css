@@ -538,6 +538,9 @@ select {
 .player-btns { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .player-btns .ctrl-btn { padding: 7px 18px; font-size: 15px; }
 .player-btns .ghost-btn.small { padding: 7px 12px; }
+/* 播放条上的图标按钮：☰ / 播放方式 / ✕ 跟 ⏮ ▶ ⏭ 挤在同一行，比 small 再窄一点 */
+.player-btns .ghost-btn.tiny { padding: 7px 9px; font-size: 12px; }
+.player-btns .ghost-btn.tiny.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 /* 进度条整行宽，并且可点：听歌时想跳回开头不用回到弹窗 */
 .player-bar { flex: 1 0 100%; order: 3; height: 5px; border-radius: 999px; background: var(--line); cursor: pointer; }
 .player-bar > i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--fg); transition: width 0.2s linear; }
@@ -550,6 +553,52 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 队列面板：贴在播放条上方展开，整列可点。“只能顺序播”的解法就是这里点谁播谁 */
+.queue-pop {
+  max-height: min(46vh, 380px);
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 16px;
+  background: var(--card-solid);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+}
+.queue-title {
+  font-size: 12px;
+  color: var(--fg-weak);
+  padding: 0 0 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-list { display: flex; flex-direction: column; }
+.queue-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.queue-row:last-child { border-bottom: none; }
+.queue-row:hover { background: var(--card); }
+.queue-row.on { background: var(--card); font-weight: 600; }
+.qr-no {
+  flex: 0 0 26px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--fg-weak);
+  font-variant-numeric: tabular-nums;
+}
+/* 搜索结果里“连播这批”那一行 */
+.music-batch { display: flex; align-items: center; gap: 10px; padding: 8px 0 6px; border-bottom: 1px solid var(--line); }
+.music-batch .bg-tip { flex: 1; min-width: 0; }
+
 /* 浮层占掉底部一条，别把最后一页内容、弹窗的「完成」按钮、以及 toast 压在它下面 */
 body.has-player .toast { bottom: 96px; }
 body.has-player #app-view { padding-bottom: 104px; }

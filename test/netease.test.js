@@ -140,6 +140,12 @@ const reg = async (name) => (await api('POST', '/api/register', { username: name
 
   ok((await api('POST', '/api/netease/config', { musicU: '' }, mine)).json.hasCookie === false, '空串表示清除')
   ok((await api('GET', '/api/netease/nope', null, mine)).status === 404, '未知子路由 404，不会误命中')
+
+  // 新加的“直接播某个歌单”与搜索的 limit 参数：坏请求要挡在门口，不能打到网易云去
+  ok((await api('GET', '/api/netease/playlist', null, mine)).status === 400, '取歌单缺 id 直接 400，不发远端请求')
+  ok((await api('GET', '/api/netease/playlist?id=' + encodeURIComponent('这不是歌单'), null, mine)).status === 400, 'id 提取不出来也是 400')
+  ok((await api('GET', '/api/netease/playlist?id=123')).status === 401, '取歌单同样要登录本应用')
+  ok((await api('GET', '/api/netease/search?q=' + encodeURIComponent('x'.repeat(61)), null, mine)).status === 400, '搜索词超长被挡住')
   ok(s.lines.join('').includes('settings.json'), '启动自检里报得出 settings.json')
 
   await new Promise((res) => { s.child.on('exit', res); s.child.kill() })

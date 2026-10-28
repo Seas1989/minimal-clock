@@ -541,7 +541,7 @@ async function handleAPI(req, res, pathname) {
     return sendJSON(res, 200, { ok: true })
   }
 
-  /* ----- 网易云音乐（休息时放歌）：全部需登录，免得本机沦为公开代理 -----
+  /* ----- 网易云音乐（全局播放条，休息时自动接上）：全部需登录，免得本机沦为公开代理 -----
    *
    * MUSIC_U 只存 data/settings.json（该目录不入库），任何接口都不回传明文，
    * 只给一个打码后的指纹用于确认“存对了没”。
@@ -605,12 +605,35 @@ async function handleAPI(req, res, pathname) {
     if (req.method === 'GET' && seg[2] === 'search') {
       const kw = String(q.get('q') || '').trim()
       if (kw.length > 60) return sendJSON(res, 400, { error: '搜索词太长了' })
+      const isPl = q.get('kind') === 'playlist'
+      const limit = Math.min(isPl ? 20 : 50, Math.max(1, Number(q.get('limit')) || 20))
       try {
-        return sendJSON(res, 200, await ne.search(kw || '轻音乐', { kind: q.get('kind') === 'playlist' ? 'playlist' : 'song', limit: 20 }))
+        const list = await ne.search(kw || '轻音乐', { kind: isPl ? 'playlist' : 'song', limit })
+        // 单曲结果按“取不取到地址”稳排一遍：没 cookie 时付费歌沉底，
+        // 否则用户搜个歌手连播，前 5 首全是播不了的，看起来就像功能坏了
+        return sendJSON(res, 200, isPl ? list : ne.sortByPlayable(list, !!rowOf().musicU))
       } catch (e) { return remote(e) }
     }
 
-    // 本次休息要播的队列：按用户配置拼好，前端拿到就是一串可直接播的曲目
+    // 任意歌单的曲目：搜索结果里点「播放」就直接成队列，不必先把这个歌单设成来源
+    if (req.method === 'GET' && seg[2] === 'playlist') {
+      const row = rowOf()
+      const id = ne.extractPlaylistId(q.get('id') || '')
+      if (!id) return sendJSON(res, 400, { error: '歌单 ID 不对' })
+      const limit = Math.min(300, Math.max(1, Number(q.get('limit')) || 120))
+      try {
+        const pl = await ne.playlist(id, { cookie: row.musicU, limit })
+        if (!pl.tracks.length) return sendJSON(res, 502, { error: '这个歌单里没有能读的曲目' })
+        return sendJSON(res, 200, {
+          id: pl.id,
+          name: pl.name,
+          trackCount: pl.trackCount,
+          tracks: ne.sortByPlayable(pl.tracks, !!row.musicU),
+        })
+      } catch (e) { return remote(e) }
+    }
+
+    // 当前的播放列表：按用户配置拼好，前端拿到就是一串可直接播的曲目
     if (req.method === 'GET' && seg[2] === 'queue') {
       const row = rowOf()
       try {
