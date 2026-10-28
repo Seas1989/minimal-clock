@@ -192,12 +192,20 @@
     </div>
   </div>
 
-  <!-- 音乐：走服务端代理读网易云，MUSIC_U 只存 data/，不入库 -->
+  <!-- 音乐：走服务端代理读网易云 / QQ 音乐，MUSIC_U 只存 data/，不入库 -->
   <div id="music-modal" class="modal hidden">
     <div class="modal-box wide">
       <h3>音乐</h3>
-      <p class="layout-tip">队列在<strong>任何界面都能放</strong>（顶栏「▶ 听歌」或按 <kbd>M</kbd>），只是进休息时会自动开始放。不填 MUSIC_U 也能用：默认放内置的<strong>轻音乐歌单</strong>，取不到地址的付费曲目会自动排到后面。</p>
+      <p class="layout-tip">队列在<strong>任何界面都能放</strong>（顶栏「▶ 听歌」或按 <kbd>M</kbd>），只是进休息时会自动开始放。不填 MUSIC_U 也能用：默认放内置的<strong>轻音乐</strong>，取不到地址的付费曲目会自动排到后面。</p>
       <div class="bg-btns">
+        <span class="bg-tip">平台</span>
+        <div class="fit-group" id="music-platform-group">
+          <button data-platform="netease" class="active">网易云</button>
+          <button data-platform="qq">QQ 音乐</button>
+        </div>
+      </div>
+      <p class="bg-tip qq-only hidden">QQ 音乐的网页接口读不到歌单（要 QQ 登录态），所以这个平台只有<strong>内置轻音乐</strong>与<strong>搜索单曲</strong>：搜到的免费曲目能整批连播、逐首加进队列，不要任何 cookie。想放自己的歌单就切回网易云。</p>
+      <div class="bg-btns ne-only">
         <span class="bg-tip">来源</span>
         <div class="fit-group" id="music-kind-group">
           <button data-kind="light" class="active">轻音乐</button>
@@ -218,7 +226,7 @@
       <p class="bg-tip">搜单曲：「播放」把搜到的这批一起连播，「＋」加进当前队列；播放条上 ☰ 能看队列、点谁播谁。</p>
       <div id="music-result" class="music-list"></div>
       <label class="bg-slider">音量<input type="range" id="music-vol" min="0" max="100" step="5" value="60"><span id="music-vol-text" class="bg-tip"></span></label>
-      <details id="music-help" class="music-help">
+      <details id="music-help" class="music-help ne-only">
         <summary>MUSIC_U 怎么取（在网易云<strong>网页</strong>登录一次，约 1 分钟）</summary>
         <ol>
           <li>电脑浏览器打开 <a href="https://music.163.com/" target="_blank" rel="noreferrer">music.163.com</a>，用手机号或二维码登进网页。只在手机 App 里登是拿不到这串的</li>
@@ -228,7 +236,7 @@
         <p class="bg-tip">嫌一步步找麻烦：Network（网络）标签里刷新一次页面，点最上面那条 music.163.com 请求，把 Request Headers 里整行 <code>Cookie:</code> 的内容复制进来也一样，服务端只挑其中的 MUSIC_U，其余直接丢掉。</p>
         <p class="bg-tip">这一步是<strong>可选</strong>的：不填也能听内置轻音乐和任何公开歌单，只是读不到你自己的收藏，VIP 曲目取不到播放地址。这串通常几十天过期，看到「MUSIC_U 无效或已过期」就照上面重新复制一次。</p>
       </details>
-      <div class="bg-btns">
+      <div class="bg-btns ne-only">
         <span class="bg-tip">MUSIC_U</span>
         <input type="text" id="music-cookie" maxlength="4200" placeholder="网易云网页端登录后复制 MUSIC_U（整条 Cookie 粘进来也行）">
         <button id="btn-music-save" class="ghost-btn small">保存</button>

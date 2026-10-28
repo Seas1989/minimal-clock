@@ -5,6 +5,7 @@ const crypto = require('crypto')
 const { Store } = require('./lib/store')
 const { CYCLE, challengeView } = require('./lib/challenges')
 const ne = require('./lib/netease')
+const qq = require('./lib/qqmusic')
 
 const PORT = process.env.PORT || 3000
 const PUBLIC_DIR = path.join(__dirname, 'public')
@@ -65,6 +66,35 @@ function friendIdsOf(userId, rels = loadFriends()) {
   return rels
     .filter((r) => r.status === 'accepted' && (r.a === userId || r.b === userId))
     .map((r) => (r.a === userId ? r.b : r.a))
+}
+
+/* ---------- 音乐配置 ----------
+ * 每人一条记录：{ musicU, platform, source }。platform 决定休息时走哪个只读代理，
+ * MUSIC_U 只对网易云有意义（QQ 音乐这边不需要 cookie 也能拿到免费曲目的地址）。
+ * 两个平台各存一半会互相覆盖，所以读写统一走 /api/music/config。
+ */
+const MUSIC_PLATFORMS = ['netease', 'qq']
+
+const musicView = (row) => ({
+  platform: row.platform,
+  hasCookie: !!row.musicU,
+  // 打码指纹：前 6 后 4，够用户核对自己粘的是哪一段了
+  cookieMask: row.musicU ? `${row.musicU.slice(0, 6)}…${row.musicU.slice(-4)}` : '',
+  source: row.source,
+})
+
+function musicRowOf(userId) {
+  const list = loadSettings()
+  let row = list.find((s) => s.user === userId)
+  if (!row) {
+    row = { user: userId, musicU: '', platform: 'netease', source: { kind: 'light', value: '', label: '' }, updatedAt: Date.now() }
+    list.push(row)
+    saveSettings()
+  }
+  // 老记录里没这些字段：按“一直在用网易云 + 内置轻音乐”补齐，别把配置读成 undefined
+  if (!MUSIC_PLATFORMS.includes(row.platform)) row.platform = 'netease'
+  if (!row.source || typeof row.source !== 'object') row.source = { kind: 'light', value: '', label: '' }
+  return row
 }
 
 /* ---------- 鉴权 ---------- */
@@ -541,55 +571,52 @@ async function handleAPI(req, res, pathname) {
     return sendJSON(res, 200, { ok: true })
   }
 
-  /* ----- 网易云音乐（全局播放条，休息时自动接上）：全部需登录，免得本机沦为公开代理 -----
+  /* ----- 音乐（全局播放条，休息时自动接上）：全部需登录，免得本机沦为公开代理 -----
    *
    * MUSIC_U 只存 data/settings.json（该目录不入库），任何接口都不回传明文，
    * 只给一个打码后的指纹用于确认“存对了没”。
    */
+
+  /* ----- 配置：平台 / 来源 / MUSIC_U 都在同一条记录上，所以单独一个路由读写 ---- */
+  if (route === 'music' && seg[2] === 'config') {
+    const row = musicRowOf(user.id)
+    if (req.method === 'GET') {
+      return sendJSON(res, 200, musicView(row))
+    }
+    // POST {platform?, musicU?, kind?, value?, label?} —— 空串 musicU 表示清除
+    const body = await readBody(req)
+    const p = 'platform' in body ? (MUSIC_PLATFORMS.includes(body.platform) ? body.platform : 'netease') : row.platform
+    const u = 'musicU' in body ? (body.musicU ? ne.extractMusicU(body.musicU) : '') : row.musicU
+    /* 先全部校验、再一次性落笔：这张 row 是内存里的活引用，
+     * 中途 return 400 却已经改了一半，下一次请求写盘就会把那个半截状态存下来 */
+    if (body.musicU && !u) return sendJSON(res, 400, { error: 'MUSIC_U 看着不对（长度不在 20–4000），重新从网易云网页端复制' })
+    const kinds = p === 'qq' ? ['light'] : ['light', 'playlist', 'mine'] // QQ 音乐只认「轻音乐」这一种来源（实测读不到歌单）
+    let source = row.source
+    if ('kind' in body || 'value' in body) {
+      const kind = 'kind' in body ? (kinds.includes(body.kind) ? body.kind : 'light') : row.source.kind
+      const raw = String('value' in body ? body.value : row.source.value || '').trim()
+      // 只切来源、还没填链接时先存空：拉队列时会说“还没选歌单”，比在这儿报 400 卡住用户顺手
+      const value = kind === 'playlist' ? ne.extractPlaylistId(raw) : ''
+      if (kind === 'playlist' && raw && !value) return sendJSON(res, 400, { error: '歌单链接或 ID 提取不出来' })
+      source = { kind, value, label: String(body.label || '').slice(0, 60) }
+    } else if (p !== row.platform) {
+      // 换平台就把来源复位成轻音乐：QQ 音乐读不到歌单，把网易云的「我的歌单」带过去只会得到一句报错
+      source = { kind: 'light', value: '', label: '' }
+    } else if (p === 'qq' && row.source.kind !== 'light') {
+      source = { kind: 'light', value: '', label: '' }
+    }
+    row.platform = p
+    row.musicU = u
+    row.source = source
+    row.updatedAt = Date.now()
+    saveSettings()
+    return sendJSON(res, 200, musicView(row))
+  }
+
+  /* ----- 网易云：歌单、搜索、播放地址 ----- */
   if (route === 'netease') {
     const q = new URL(req.url, `http://${req.headers.host}`).searchParams
-    const view = (row) => ({
-      hasCookie: !!row.musicU,
-      // 打码指纹：前 6 后 4，够用户核对自己粘的是哪一段了
-      cookieMask: row.musicU ? `${row.musicU.slice(0, 6)}…${row.musicU.slice(-4)}` : '',
-      source: row.source,
-    })
-    const rowOf = () => {
-      const list = loadSettings()
-      let row = list.find((s) => s.user === user.id)
-      if (!row) {
-        row = { user: user.id, musicU: '', source: { kind: 'light', value: '', label: '' }, updatedAt: Date.now() }
-        list.push(row)
-        saveSettings()
-      }
-      return row
-    }
-
-    if (req.method === 'GET' && seg[2] === 'config') {
-      return sendJSON(res, 200, view(rowOf()))
-    }
-
-    // POST {musicU?, kind?, value?, label?} —— 空串 musicU 表示清除
-    if (req.method === 'POST' && seg[2] === 'config') {
-      const body = await readBody(req)
-      const row = rowOf()
-      if ('musicU' in body) {
-        const v = body.musicU ? ne.extractMusicU(body.musicU) : ''
-        if (body.musicU && !v) return sendJSON(res, 400, { error: 'MUSIC_U 看着不对（长度不在 20–4000），重新从网易云网页端复制' })
-        row.musicU = v
-      }
-      if ('kind' in body) {
-        const kind = ['light', 'playlist', 'mine'].includes(body.kind) ? body.kind : 'light'
-        const raw = String(body.value || '').trim()
-        // 只切来源、还没填链接时先存空：拉队列时会说“还没选歌单”，比在这儿报 400 卡住用户顺手
-        const value = kind === 'playlist' ? ne.extractPlaylistId(raw) : ''
-        if (kind === 'playlist' && raw && !value) return sendJSON(res, 400, { error: '歌单链接或 ID 提取不出来' })
-        row.source = { kind, value, label: String(body.label || '').slice(0, 60) }
-      }
-      row.updatedAt = Date.now()
-      saveSettings()
-      return sendJSON(res, 200, view(row))
-    }
+    const rowOf = () => musicRowOf(user.id)
 
     // 远端失败统一报 502：与自己的数据出错区分开，前端只提示“这次没拿到”，不把弹窗打碎
     // neteaseFetch 的错误消息已经自带“网易云 / 连不上”字样，再加前缀就变成两句重复的话
@@ -651,6 +678,50 @@ async function handleAPI(req, res, pathname) {
         const r = await ne.songUrl(q.get('id'), { cookie: row.musicU })
         // 取不到地址也回 200：r.url 为空 + r.reason 说明原因，比一个没有响应体的 204 好处理
         return sendJSON(res, 200, r)
+      } catch (e) { return remote(e) }
+    }
+  }
+
+  /* ----- QQ 音乐：只有单曲搜索与播放地址 -----
+   * 没有歌单类路由不是偷懒：那几个接口在没有 QQ 音乐登录态时全部回错误（实测记录写在
+   * lib/qqmusic.js 顶部），所以这个平台的“来源”只有内置轻音乐，其余靠搜索自己搭列表。
+   */
+  if (route === 'qq') {
+    const q = new URL(req.url, `http://${req.headers.host}`).searchParams
+    const remote = (e) => sendJSON(res, 502, { error: e.message })
+
+    if (req.method === 'GET' && seg[2] === 'search') {
+      const kw = String(q.get('q') || '').trim()
+      if (kw.length > 60) return sendJSON(res, 400, { error: '搜索词太长了' })
+      const limit = Math.min(50, Math.max(1, Number(q.get('limit')) || 30))
+      const page = Math.max(1, Number(q.get('page')) || 1)
+      try {
+        const list = await qq.search(kw || '轻音乐', { limit, page })
+        // 免费歌排前面：付费歌在 QQ 音乐这边一定拿不到地址，排在前面只会让用户一上手就连着播放失败
+        return sendJSON(res, 200, qq.sortByPlayable(list))
+      } catch (e) { return remote(e) }
+    }
+
+    if (req.method === 'GET' && seg[2] === 'url') {
+      const id = String(q.get('id') || '').trim()
+      // 坏 id 拦在门口，不往 QQ 音乐发请求（它的 vkey 接口对非法 songmid 会直接返空）
+      if (!qq.isMid(id)) return sendJSON(res, 400, { error: '歌曲 ID 不对（QQ 音乐用的是 songmid）' })
+      try {
+        const r = await qq.songUrl(id)
+        // 与网易云同一形状：取不到地址也回 200，用 r.reason 说清楚原因
+        return sendJSON(res, 200, r)
+      } catch (e) { return remote(e) }
+    }
+
+    // 当前的播放列表：QQ 音乐这边就是“把几个搜索词里的免费单曲攒起来”
+    if (req.method === 'GET' && seg[2] === 'queue') {
+      const row = musicRowOf(user.id)
+      try {
+        const r = await qq.buildQueue(row.source)
+        return sendJSON(res, 200, Object.assign({}, r, {
+          offset: Math.floor(Math.random() * r.tracks.length), // 每次进来换个开头，不然休息总是从第一首开始
+          playable: r.tracks.length, // 攒进队列的已经是全部能播的那部分
+        }))
       } catch (e) { return remote(e) }
     }
   }

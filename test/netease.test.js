@@ -4,6 +4,7 @@
  * 覆盖两块能确定的东西：
  *   1. 纯解析：字段兼容（ar/al 与 artists/album）、地址升级、付费原因、队列环形取数
  *   2. HTTP 配置：MUSIC_U 只存不打回、歌单链接提取 ID、按用户隔离、非法输入挡住
+ * 配置路由是 /api/music/config（网易云与 QQ 音乐共用同一条记录）
  */
 const { spawn } = require('child_process')
 const http = require('http')
@@ -110,36 +111,37 @@ const reg = async (name) => (await api('POST', '/api/register', { username: name
 
   console.log('2) 配置接口（不联网）')
   const s = await startServer()
-  ok((await api('GET', '/api/netease/config')).status === 401, '没登录不给用（免得本机沦为公开代理）')
+  ok((await api('GET', '/api/music/config')).status === 401, '没登录不给用（免得本机沦为公开代理）')
 
   const mine = await reg('音乐甲')
   const other = await reg('音乐乙')
-  let cfg = (await api('GET', '/api/netease/config', null, mine)).json
+  let cfg = (await api('GET', '/api/music/config', null, mine)).json
   ok(cfg.hasCookie === false && cfg.source.kind === 'light', `默认来源是轻音乐（${cfg.source.kind}）`)
 
-  cfg = (await api('POST', '/api/netease/config', { kind: 'playlist', value: 'https://music.163.com/#/playlist?id=2392709157', label: '我的轻音乐' }, mine)).json
+  cfg = (await api('POST', '/api/music/config', { kind: 'playlist', value: 'https://music.163.com/#/playlist?id=2392709157', label: '我的轻音乐' }, mine)).json
   ok(cfg.source.value === '2392709157' && cfg.source.label === '我的轻音乐', '粘贴歌单链接后存的是纯 ID')
-  ok((await api('POST', '/api/netease/config', { kind: 'playlist', value: '这串不是歌单' }, mine)).status === 400, '提取不出 ID 时报 400，不写坏配置')
-  cfg = (await api('POST', '/api/netease/config', { kind: 'playlist', value: '   ' }, mine)).json
+  ok((await api('POST', '/api/music/config', { kind: 'playlist', value: '这串不是歌单' }, mine)).status === 400, '提取不出 ID 时报 400，不写坏配置')
+  cfg = (await api('POST', '/api/music/config', { kind: 'playlist', value: '   ' }, mine)).json
   ok(cfg.source.kind === 'playlist' && cfg.source.value === '', '只切来源、链接还没粘时先收下（拉队列时才提示），不半路卡住用户')
-  cfg = (await api('POST', '/api/netease/config', { kind: 'bogus' }, mine)).json
+  cfg = (await api('POST', '/api/music/config', { kind: 'bogus' }, mine)).json
   ok(cfg.source.kind === 'light', '非法 kind 回落到轻音乐，不留下没人认识的状态')
-  cfg = (await api('POST', '/api/netease/config', { kind: 'mine' }, mine)).json
+  cfg = (await api('POST', '/api/music/config', { kind: 'mine' }, mine)).json
   ok(cfg.source.kind === 'mine' && cfg.source.value === '', '切到「我的歌单」会把残留的歌单 ID 清空')
 
-  const saved = (await api('POST', '/api/netease/config', { musicU: `MUSIC_U=${U}; sid=1` }, mine)).json
+  const saved = (await api('POST', '/api/music/config', { musicU: `MUSIC_U=${U}; sid=1` }, mine)).json
   ok(saved.hasCookie === true && saved.cookieMask === `${U.slice(0, 6)}…${U.slice(-4)}`, `MUSIC_U 存下并给出打码指纹（${saved.cookieMask}）`)
   ok(!JSON.stringify(saved).includes(U), '响应里搜不到 MUSIC_U 明文')
-  ok((await api('POST', '/api/netease/config', { musicU: 'short' }, mine)).status === 400, '明显不是 MUSIC_U 的短串被挡住')
-  ok((await api('GET', '/api/netease/config', null, other)).json.hasCookie === false, '两个账号的配置互相隔离，乙看不到甲的 cookie')
+  ok((await api('POST', '/api/music/config', { musicU: 'short' }, mine)).status === 400, '明显不是 MUSIC_U 的短串被挡住')
+  ok((await api('GET', '/api/music/config', null, other)).json.hasCookie === false, '两个账号的配置互相隔离，乙看不到甲的 cookie')
 
   // 落盘的应该是真值（下次请求要拿它去访问网易云），但不能串到别人的记录上
   const rows = JSON.parse(fs.readFileSync(path.join(DATA, 'settings.json'), 'utf8'))
   ok(rows.length === 2 && rows.some((r) => r.musicU === U), 'settings.json 里存了原值供服务端使用')
   ok(rows.every((r) => r.user), '每条都绑定用户 id')
 
-  ok((await api('POST', '/api/netease/config', { musicU: '' }, mine)).json.hasCookie === false, '空串表示清除')
+  ok((await api('POST', '/api/music/config', { musicU: '' }, mine)).json.hasCookie === false, '空串表示清除')
   ok((await api('GET', '/api/netease/nope', null, mine)).status === 404, '未知子路由 404，不会误命中')
+  ok((await api('GET', '/api/music/nope', null, mine)).status === 404, '配置路由也只接 config，多余子路径不命中')
 
   // 新加的“直接播某个歌单”与搜索的 limit 参数：坏请求要挡在门口，不能打到网易云去
   ok((await api('GET', '/api/netease/playlist', null, mine)).status === 400, '取歌单缺 id 直接 400，不发远端请求')

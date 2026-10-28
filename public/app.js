@@ -1453,7 +1453,7 @@ $('rest-len').addEventListener('input', () => {
  * 不然等 await 拉完地址再 play()，Safari 会当成非手势调用直接拦下 */
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
 
-let musicCfg = null // { hasCookie, cookieMask, source: { kind, value, label } }
+let musicCfg = null // { platform, hasCookie, cookieMask, source: { kind, value, label } }
 let queue = null    // { kind, name, playlistId, tracks[], offset }：当前的播放列表，可来自来源、搜索单曲、手动加
 /* owner 决定休息结束时收不收起：'rest' 是休息自动起的（结束就替他关掉），
  * 'user' 是他自己点起来的（一直留着，切界面也不停）
@@ -1464,6 +1464,13 @@ const audioEl = () => $('music-audio')
 const musicVol = () => clamp(lsNum('musicVol', 60), 0, 100) / 100
 const curTrack = () => (queue && queue.tracks && queue.tracks.length ? queue.tracks[music.i] : null)
 const fmtSongTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
+
+/* 当前的音乐平台：服务端配置里存的那一个，取数据的路径以它为前缀
+ * （/api/netease/* 与 /api/qq/* 形状一致：search / url / queue 三件事）*/
+const mp = () => (musicCfg && musicCfg.platform === 'qq' ? 'qq' : 'netease')
+const isQQ = () => mp() === 'qq'
+// 曲目 id：网易云是数字，QQ 音乐是 songmid 字符串，restoreQueue 两种都要认
+const isTrackId = (v) => (Number(v) > 0 ? true : /^[A-Za-z0-9]{8,20}$/.test(String(v || '')))
 
 /* 播放方式：顺序（放完下一首）/ 随机（一轮内不重复）/ 单曲循环 */
 const PLAY_MODES = ['order', 'shuffle', 'one']
@@ -1500,7 +1507,7 @@ function restoreQueue() {
     return
   }
   if (!r || !Array.isArray(r.tracks)) return
-  const tracks = r.tracks.filter((t) => t && Number(t.id) > 0 && t.name)
+  const tracks = r.tracks.filter((t) => t && isTrackId(t.id) && t.name)
   if (!tracks.length) { localStorage.removeItem('musicQueue'); return }
   queue = { kind: 'songs', name: String(r.name || '播放列表').slice(0, 40), playlistId: 0, tracks, offset: 0 }
   music.i = clamp(Number(r.i) || 0, 0, tracks.length - 1)
@@ -1518,7 +1525,7 @@ function unlockAudio() {
 
 async function loadMusicCfg() {
   try {
-    musicCfg = await api('/api/netease/config')
+    musicCfg = await api('/api/music/config')
   } catch { musicCfg = null }
   syncMusicModal()
 }
@@ -1528,7 +1535,7 @@ async function loadQueue(force) {
   if (queue && !force) return queue
   let q = null
   try {
-    q = await api('/api/netease/queue')
+    q = await api(`/api/${mp()}/queue`)
   } catch (e) { queue = null; syncPlayer(); toast('音乐没拿到：' + e.message); return null }
   if (!q || !Array.isArray(q.tracks) || !q.tracks.length) { queue = null; syncPlayer(); toast('这个来源里没有能读的曲目'); return null }
   queue = q
@@ -1548,9 +1555,11 @@ function skipUnplayable() {
   music.tries++
   if (music.tries >= 5) {
     music.loading = false
-    music.warn = musicCfg && musicCfg.hasCookie
-      ? '这个来源里连着 5 首都取不到地址，换一批试试'
-      : '连着 5 首都是付费歌，填入 MUSIC_U 后才能播'
+    music.warn = isQQ()
+      ? '这个列表里连着 5 首都拿不到地址（QQ 音乐只给免费曲目），换一批试试'
+      : musicCfg && musicCfg.hasCookie
+        ? '这个来源里连着 5 首都取不到地址，换一批试试'
+        : '连着 5 首都是付费歌，填入 MUSIC_U 后才能播'
     audioEl().removeAttribute('src')
     renderMusicBar()
     return
@@ -1568,7 +1577,7 @@ async function playCurrent() {
   renderMusicBar()
   let r = null
   try {
-    r = await api(`/api/netease/url?id=${t.id}`)
+    r = await api(`/api/${mp()}/url?id=${encodeURIComponent(t.id)}`)
   } catch (e) {
     music.loading = false
     music.warn = e.message
@@ -1705,7 +1714,7 @@ function renderMusicBar() {
   const pos = d > 0 ? ` ${fmtSongTime(a.currentTime)} / ${fmtSongTime(d)}` : ''
   $('rm-sub').textContent = music.warn
     ? ''
-    : `${queue.name} 第 ${music.i + 1}/${queue.tracks.length} 首${artist ? ' · ' + artist : ''}${pos}${musicCfg && !musicCfg.hasCookie ? ' · 未填 MUSIC_U（付费歌可能播不了）' : ''}`
+    : `${queue.name} 第 ${music.i + 1}/${queue.tracks.length} 首${artist ? ' · ' + artist : ''}${pos}${!isQQ() && musicCfg && !musicCfg.hasCookie ? ' · 未填 MUSIC_U（付费歌可能播不了）' : ''}`
   $('btn-rm-toggle').textContent = a.paused ? '▶' : '⏸'
   $('rm-fill').style.width = music.loading ? '35%' : d > 0 ? `${clamp((a.currentTime / d) * 100, 0, 100).toFixed(2)}%` : '0%'
   syncQueueRows()
@@ -1898,6 +1907,11 @@ function openMusic() {
 function closeMusic() { $('music-modal').classList.add('hidden') }
 
 function syncMusicModal() {
+  const onQQ = isQQ()
+  // 平台切换：网易云那边才有歌单类来源与 MUSIC_U，切到 QQ 就把整段收起来而不是留一堆灰按钮
+  document.querySelectorAll('#music-platform-group button').forEach((b) => b.classList.toggle('active', b.dataset.platform === mp()))
+  document.querySelectorAll('#music-modal .ne-only').forEach((el) => el.classList.toggle('hidden', onQQ))
+  document.querySelectorAll('#music-modal .qq-only').forEach((el) => el.classList.toggle('hidden', !onQQ))
   const src = (musicCfg && musicCfg.source) || { kind: 'light', value: '' }
   document.querySelectorAll('#music-kind-group button').forEach((b) => b.classList.toggle('active', b.dataset.kind === src.kind))
   $('music-mine').classList.toggle('hidden', src.kind !== 'mine')
@@ -1907,18 +1921,20 @@ function syncMusicModal() {
   $('music-vol').value = vol
   $('music-vol-text').textContent = `${vol}%`
   $('music-cookie').value = ''
-  $('music-status').textContent = musicCfg
-    ? musicCfg.hasCookie
-      ? `已保存 MUSIC_U（${musicCfg.cookieMask}），付费歌也能取到地址` // 只给打码指纹，明文不回传
-      : '未填 MUSIC_U：只播免费曲目，内置轻音乐照常可用'
-    : '未登录，音乐设置不可用'
+  $('music-status').textContent = !musicCfg
+    ? '未登录，音乐设置不可用'
+    : onQQ
+      ? 'QQ 音乐：不需要任何 cookie，但只播免费曲目（付费的排在后面，点了会自动跳过）'
+      : musicCfg.hasCookie
+        ? `已保存 MUSIC_U（${musicCfg.cookieMask}），付费歌也能取到地址` // 只给打码指纹，明文不回传
+        : '未填 MUSIC_U：只播免费曲目，内置轻音乐照常可用'
 }
 
 async function saveMusicCfg(patch) {
   try {
-    musicCfg = await api('/api/netease/config', { method: 'POST', body: JSON.stringify(patch) })
-    // 换了来源（kind / value）手上的队列就作废；正在听就顺着切到新来源，而不是留个对不上的旧队列
-    if ((patch.kind != null || patch.value != null) && queue) {
+    musicCfg = await api('/api/music/config', { method: 'POST', body: JSON.stringify(patch) })
+    // 换了来源或平台，手上的队列就作废：曲目 id 属于原来那个平台，拿去要地址只会得到一句“ID 不对”
+    if ((patch.kind != null || patch.value != null || patch.platform != null) && queue) {
       const wasPlaying = !audioEl().paused
       queue = null
       localStorage.removeItem('musicQueue')
@@ -1929,6 +1945,10 @@ async function saveMusicCfg(patch) {
     return true
   } catch (e) { toast(e.message); return false }
 }
+
+document.querySelectorAll('#music-platform-group button').forEach((b) => {
+  b.onclick = () => saveMusicCfg({ platform: b.dataset.platform })
+})
 
 document.querySelectorAll('#music-kind-group button').forEach((b) => {
   b.onclick = () => {
@@ -1971,40 +1991,46 @@ $('btn-music-search').onclick = searchMusic
 $('music-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchMusic() })
 
 // 歌单和单曲各拉一次：歌单用来设来源或直接播，单曲用来连播 / 逐首搭自己的列表
+// （QQ 音乐读不到歌单，那边只拉单曲一路）
 async function searchMusic() {
   const kw = $('music-q').value.trim()
   const box = $('music-result')
   box.innerHTML = `<div class="empty-tip">${kw ? '搜索中…' : '试试搜「轻音乐」'}</div>`
   if (!kw) return
+  const onQQ = isQQ()
   const [pls, songs] = await Promise.all([
-    api(`/api/netease/search?q=${encodeURIComponent(kw)}&kind=playlist`).catch(() => []),
-    api(`/api/netease/search?q=${encodeURIComponent(kw)}&kind=song&limit=30`).catch(() => []),
+    onQQ ? Promise.resolve([]) : api(`/api/${mp()}/search?q=${encodeURIComponent(kw)}&kind=playlist`).catch(() => []),
+    api(`/api/${mp()}/search?q=${encodeURIComponent(kw)}&kind=song&limit=30`).catch(() => []),
   ])
   box.innerHTML = ''
-  if (!pls.length && !songs.length) box.innerHTML = '<div class="empty-tip">网易云没返回结果</div>'
+  if (!pls.length && !songs.length) box.innerHTML = `<div class="empty-tip">${onQQ ? 'QQ 音乐' : '网易云'}没返回结果</div>`
   pls.forEach((p) => {
     box.appendChild(musicItem(p.name, `歌单 · ${p.trackCount} 首 · ${p.creator || ''}`, [
       { label: '播放', title: '直接放这个歌单，不改「休息时放什么」', onclick: () => playPlaylistNow(p) },
       { label: '设为来源', onclick: () => saveMusicCfg({ kind: 'playlist', value: String(p.id), label: p.name }) },
     ]))
   })
-  if (songs.length) {
+  /* QQ 音乐这边付费歌一定拿不到地址：连播时先把它们剔掉，
+   * 不然列表尾巴上全是在“自动跳过”，看上去就像卡在最后几首 */
+  const playable = onQQ ? songs.filter((s) => s.free !== false) : songs
+  if (playable.length) {
     const bar = document.createElement('div')
     bar.className = 'music-batch'
     const all = document.createElement('button')
     all.className = 'ghost-btn small'
-    all.textContent = `▶ 连播这 ${songs.length} 首`
-    all.onclick = () => playSongs(songs, `单曲 · ${kw}`, 0)
+    all.textContent = `▶ 连播这 ${playable.length} 首`
+    all.onclick = () => playSongs(playable, `单曲 · ${kw}`, 0)
     bar.appendChild(all)
     const tip = document.createElement('span')
     tip.className = 'bg-tip'
-    tip.textContent = '或逐首点「＋」搭自己的列表'
+    tip.textContent = onQQ && playable.length < songs.length ? `另有 ${songs.length - playable.length} 首要会员，排在后面` : '或逐首点「＋」搭自己的列表'
     bar.appendChild(tip)
     box.appendChild(bar)
   }
-  songs.forEach((s, i) => {
-    box.appendChild(musicItem(s.name, `${s.artists} · ${Math.round(s.duration / 1000)}s`, [
-      { label: '播放', title: '从这首开始连播搜到的单曲', onclick: () => playSongs(songs, `单曲 · ${kw}`, i) },
+  songs.forEach((s) => {
+    const at = playable.indexOf(s)
+    box.appendChild(musicItem(s.name, `${s.artists} · ${Math.round(s.duration / 1000)}s${onQQ && s.free === false ? ' · 需会员' : ''}`, [
+      { label: '播放', title: at >= 0 ? '从这首开始连播搜到的单曲' : '这首要会员，从这批里能播的那首开始', onclick: () => playSongs(playable, `单曲 · ${kw}`, Math.max(0, at)) },
       { label: '＋', title: '加进当前列表', onclick: () => addToQueue(s) },
     ]))
   })
