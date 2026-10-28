@@ -6,6 +6,12 @@ import { clamp } from './background.js'
 import { isMobile } from './mobile-shell.js'
 import { DEFAULT_LAYOUT, layout, panelEl, saveLayout, setLayout } from './layout.js'
 
+/* 弹簧与心跳来自 public/physics.js：那个是无模块的经典脚本，在 index.html 里排在
+ * type=module 前面同步执行，所以模块求值时 window.Phys 一定已经就位。
+ * 这几样是下面各个函数共用的，必须放在模块顶层 —— 塞进 init() 里就成了 init 的局部量，
+ * physOf / startDrag 这些函数根本看不见它们 */
+const { Spring, Spring2, Ticker, Tracker, rubber } = window.Phys
+
 const bodyPhys = new Map() // card -> { p 位移弹簧, sq 形变弹簧, rot 倾角弹簧 }
 function physOf(card) {
   let b = bodyPhys.get(card)
@@ -310,8 +316,6 @@ function makeDraggable(card) {
 /* 顶层接线：DOM 事件与初始渲染。原来直接摊在 app.js 顶层，
  * 拆成模块后放进 init()，由 main.js 按原文件顺序调用，避免模块求值顺序影响这些副作用。 */
 export function init() {
-  const { Spring, Spring2, Ticker, Tracker, rubber } = window.Phys
-
   ghost.className = 'ghost'
 
   // 兜底：上一轮拖拽若被打断，卡片可能残留在 body 上并带着内联定位/尺寸

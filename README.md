@@ -40,15 +40,17 @@
 | 层 | 选型 | 说明 |
 | --- | --- | --- |
 | 运行时 | Node.js ≥ 16 | 仅用 `http` / `fs` / `path` / `crypto` 原生模块 |
-| 后端 | 手写 HTTP 服务 | 路由 + 静态文件 + JSON 持久化，无框架 |
-| 存储层 | `lib/store.js`（~130 行） | 内存真源 + 原子写 + `.bak` 自动回滚，无数据库依赖 |
-| 挑战算法 | `lib/challenges.js`（~95 行） | 进度推导 / 排行 / 详情视图，纯函数，不碰 HTTP 与磁盘 |
-| 音乐代理 | `lib/netease.js`（~290 行） | 只用 `node:https` 直连网易云网页端接口；解析函数全是纯的，断网也能测 |
-| QQ 音乐代理 | `lib/qqmusic.js`（~200 行） | 同一套分层：单曲搜索 + vkey 直链，不需要登录态；同样纯解析、可离线测 |
+| 后端分层 | `server.js` + `lib/` | 入口只起服务；`lib/api.js` 分发，`lib/routes/*.js` 一个资源一个文件，无框架 |
+| 存储层 | `lib/db.js` + `lib/store.js`（~285 行） | 内存真源 + 原子写 + `.bak` 自动回滚，无数据库依赖 |
+| HTTP 工具 | `lib/http.js`（~72 行）+ `lib/auth.js`（~22 行） | 收发请求体 / 静态文件 / 密码散列与 token，不掺业务 |
+| 挑战算法 | `lib/challenges.js`（~89 行） | 进度推导 / 排行 / 详情视图，纯函数，不碰 HTTP 与磁盘 |
+| 音乐代理 | `lib/music/netease.js`（~274 行） | 只用 `node:https` 直连网易云网页端接口；解析函数全是纯的，断网也能测 |
+| QQ 音乐代理 | `lib/music/qqmusic.js`（~176 行） | 同一套分层：单曲搜索 + vkey 直链，不需要登录态；同样纯解析、可离线测 |
 | 测试 | `test/*.test.js` | 自己拉起服务 + 临时 DATA_DIR，137 项断言不碰真实数据、不碰外网 |
-| 前端 | 原生 HTML / CSS / JS | 无构建、无打包；**桌面端零框架** |
-| 手机端外壳 | Alpine.js 3.14.9（CDN，`defer`） | 全项目**唯一**一处第三方运行时，只管 `view` / `drawer` 两个状态；CDN 不通时退回 `app.js` 里的原生绑定 |
-| 手机端样式 | `public/mobile.css`（~280 行） | `<link media="(max-width: 760px)">`，桌面上浏览器根本不解析这个文件 |
+| 前端 | 原生 HTML / CSS / **ES Module** | 无构建、无打包、不引 bundler；`index.html` 只引一个 `js/main.js`，其余靠浏览器原生 `import`；**桌面端零框架** |
+| 前端模块 | `public/js/*.js`（24 个，~2200 行） | 一个功能一个文件；模块体只放声明，接线集中在 `init()`，由 `js/main.js` 按固定顺序调用 |
+| 手机端外壳 | Alpine.js 3.14.9（CDN，`defer`） | 全项目**唯一**一处第三方运行时，只管 `view` / `drawer` 两个状态；CDN 不通时退回 `js/mobile-shell.js` 里的原生绑定 |
+| 手机端样式 | `public/css/mobile.css`（~270 行） | `<link media="(max-width: 760px)">`，桌面上浏览器根本不解析这个文件 |
 | 动效 | `public/physics.js`（~110 行） | 自写弹簧积分引擎（半隐式欧拉），非第三方库 |
 | 数据 | JSON 文件（`data/`） | 首次启动自动生成目录 |
 | 状态记忆 | `localStorage` | 主题、模式、背景、布局都存本地 |
@@ -59,12 +61,25 @@
 
 ```
 .
-├── server.js           # 后端入口：路由、鉴权、静态服务
+├── server.js           # 入口只做一件事：读环境变量、起 http、把请求交给 lib/api.js
 ├── lib/
-│   ├── store.js        # 存储层：内存真源 + 原子写 + 备份回滚（无第三方依赖）
+│   ├── api.js          # /api/* 分发表：路径 → 处理函数，以及“这条要不要登录”
+│   ├── http.js         # 收发层：sendJSON / readBody / 静态文件与 MIME
+│   ├── auth.js         # scrypt 散列与 token（请求头 x-token）
+│   ├── db.js           # 数据访问层：五个 JSON Store + 好友关系 + 音乐配置行
+│   ├── store.js        # 存储地基：内存真源 + 原子写 + 备份回滚 + 旧数据迁移
 │   ├── challenges.js   # 同任务挑战的纯计算：进度推导、排行、详情视图
-│   ├── netease.js      # 网易云只读代理：搜索 / 歌单 / 播放地址，解析与网络分层
-│   └── qqmusic.js      # QQ 音乐只读代理：单曲搜索 / vkey 播放地址（读不到歌单，见 README 音乐章节）
+│   ├── routes/         # 接口按资源切开，一个文件一组
+│   │   ├── account.js  # 注册 / 登录 / me
+│   │   ├── tasks.js    # 任务增删改、计时动作、窗口坞
+│   │   ├── friends.js  # 好友申请、应答、解除
+│   │   ├── challenge.js# 挑战：发起 / 应答 / 追加邀请 / 点赞 / 退出 / 关闭
+│   │   ├── music.js    # 音乐配置读写（MUSIC_U 只进不出）
+│   │   ├── netease.js  # 网易云：歌单 / 搜索 / 队列 / 直链
+│   │   └── qq.js       # QQ 音乐：搜索 / 队列 / 直链
+│   └── music/          # 上游平台适配层（解析与网络分层，纯函数可离线测）
+│       ├── netease.js
+│       └── qqmusic.js
 ├── package.json        # 元信息 + npm start / npm test
 ├── LICENSE             # MIT
 ├── README.md
@@ -75,10 +90,20 @@
 │   └── qqmusic.test.js   # QQ 测试：songmid/singer/pay 解析 + midurlinfo 取值 + 平台切换与迁移（不联网）
 ├── public/             # 前端静态资源（无任何构建步骤）
 │   ├── index.html      # 页面骨架：面板、窗口坞、专注层、弹窗、控件，以及手机端顶栏 ☰ 与整屏抽屉
-│   ├── style.css       # 主题变量、布局动画，以及 ≤ 760px 的「单栏 + 整页滚」退路形态
-│   ├── mobile.css      # 手机端外壳：锁一屏不滚、卡片变全屏视图、弹层变满屏 sheet（只在 ≤ 760px 加载）
-│   ├── physics.js      # 微物理引擎：弹簧 / 全局 rAF 心跳 / 指针速度 / 橡皮筋
-│   └── app.js          # 全部前端逻辑：计时、渲染、背景、拖拽布局、手机端外壳、API 调用
+│   ├── physics.js      # 微物理引擎：弹簧 / 全局 rAF 心跳 / 指针速度 / 橡皮筋（普通脚本，挂到 window.Phys）
+│   ├── css/
+│   │   ├── style.css   # 主题变量、布局与拖拽动画，以及 ≤ 760px 的「单栏 + 整页滚」退路形态
+│   │   └── mobile.css  # 手机端外壳：锁一屏不滚、卡片变全屏视图、弹层变满屏 sheet（只在 ≤ 760px 加载）
+│   └── js/             # ES Module，一个功能一个文件；index.html 只引 main.js，其余靠浏览器原生 import
+│       ├── main.js             # 入口：按固定顺序调用各模块的 init()
+│       ├── state.js / utils.js / ui.js / tabs.js / heartbeat.js   # 公共地基（$、时间格式、toast、标签页、轮询）
+│       ├── auth.js / display.js / task-list.js / task-actions.js  # 登录态、表盘渲染、任务列表与控制
+│       ├── dock.js / focus.js / rest.js           # 窗口坞、专注层、休息
+│       ├── friends.js / challenges.js / shortcuts.js             # 好友、挑战前端、键盘快捷键
+│       ├── theme.js / background.js               # 主题与对比度自适应、背景取景
+│       ├── layout.js / panel-drag.js              # 布局存档与桌面拖拽物理（手机不装热区）
+│       ├── music.js / music-queue.js / music-modal.js            # 播放条与队列、搜索与来源面板
+│       └── mobile-shell.js                        # 手机端外壳：view / drawer 状态机与 Alpine 退路
 ├── data/               # ⚠️ 运行期数据，含账号信息，已在 .gitignore 中排除
 │   ├── users.json      # 用户（id / username / salt / hash / token）
 │   ├── tasks.json      # 任务（按 owner 隔离，含所属挑战与窗口开关）
@@ -90,7 +115,7 @@
     └── start-clock.bat # Windows 启动脚本
 ```
 
-划分原则：**`server.js` 只管接口，`lib/store.js` 只管数据怎么存，`public/` 只管界面和交互**，两边通过 `/api/*` 通信；数据与本机脚本一律与源码隔离，`git clone` 出来的仓库永远是干净的代码。
+划分原则：**一个目录只回答一个问题** —— `server.js` 只管“怎么起服务”，`lib/http.js` 只管“怎么收发”，`lib/db.js` 与 `lib/store.js` 只管“数据怎么存”，`lib/routes/*.js` 按资源各管一组接口，`lib/music/*.js` 只管“上游怎么解析”，`public/js/*.js` 一个交互一个文件。两边通过 `/api/*` 通信；数据与本机脚本一律与源码隔离，`git clone` 出来的仓库永远是干净的代码。
 
 ---
 
@@ -327,11 +352,11 @@ $env:PORT="8080"; node server.js
 - **省电**：全部弹簧共用一条 `requestAnimationFrame` 心跳，静止后自动停摆，不空转
 - **恢复默认**：布局弹窗内可一键重置
 
-布局结果存 `localStorage` 的 `layoutV2`，重开浏览器保持不变；数据异常时自动回落到默认布局。没引入第三方物理库（GSAP / matter.js 与“零依赖、无构建”的定位冲突），`public/physics.js` 一百行写完。
+布局结果存 `localStorage` 的 `layoutV2`，重开浏览器保持不变；数据异常时自动回落到默认布局。没引入第三方物理库（GSAP / matter.js 与“零依赖、无构建”的定位冲突），`public/physics.js` 一百行写完。代码位：存档读写在 `public/js/layout.js`，拖拽本身（热区装配、跟手弹簧、挤让位、落位动画、列宽挤压）在 `public/js/panel-drag.js`；手机不装热区就在那文件的 `if (!isMobile())` 一行上，不是删了拖拽，是只给桌面装。
 
 ### 手机端适配
 
-手机上的要求不是“把桌面挤窄”，而是三条硬的：**不用拖动**、**大小刚好一屏**、**不要上下滑动**。所以 ≤ 760px 干脆换成另一套形态，由 `public/mobile.css` + `app.js` 里一段手机外壳驱动。
+手机上的要求不是“把桌面挤窄”，而是三条硬的：**不用拖动**、**大小刚好一屏**、**不要上下滑动**。所以 ≤ 760px 干脆换成另一套形态，由 `public/css/mobile.css` + `public/js/mobile-shell.js` 驱动。
 
 **形态：整屏一页一个事**
 
@@ -349,13 +374,13 @@ $env:PORT="8080"; node server.js
 
 **外壳用 Alpine.js（本项目唯一一处第三方运行时）**
 
-只让它管两个状态：当前哪一页（`view`）与抽屉开没开（`drawer`），绑成 `body` 上的 `data-view` / `data-drawer`；页面长什么样全在 `mobile.css` 里由这两个属性决定。状态真源存在 `app.js` 的普通变量里，Alpine 只是它的绑定镜像，所以：
+只让它管两个状态：当前哪一页（`view`）与抽屉开没开（`drawer`），绑成 `body` 上的 `data-view` / `data-drawer`；页面长什么样全在 `mobile.css` 里由这两个属性决定。状态真源存在 `js/mobile-shell.js` 的普通变量里，Alpine 只是它的绑定镜像，所以：
 
-- **不把 `app.js` 那两千多行渲染重写第二遍**，抽屉只是多一层路由；
-- **CDN 不通也不瘫**：`defer` 的 Alpine 没就绪时，`app.js` 用同一批 `data-*` 属性补上原生 click 绑定，只少“当前页高亮”这一点视觉；两套绑定同时存在时靠 `if (shellRef) return` 守卫，不会把「听歌」点成开始又立即暂停；
+- **不把 `public/js/` 那两千多行渲染重写第二遍**，抽屉只是多一层路由；
+- **CDN 不通也不瘫**：`defer` 的 Alpine 没就绪时，`js/mobile-shell.js` 用同一批 `data-*` 属性补上原生 click 绑定，只少“当前页高亮”这一点视觉；两套绑定同时存在时靠 `if (shellRef) return` 守卫，不会把「听歌」点成开始又立即暂停；
 - 两层保险各管一半：`<link media="(max-width: 760px)">` 挡住桌面（避免 JS 没跑时桌面被误改），`body.mobile`（由 `matchMedia` 打）挡住“JS 挂了 / Alpine 没加载”——这时退回下面那张表里的老手机布局，功能照常可用。
 
-为什么不是“另外做一套移动端页面”：数据、鉴权、音乐队列全在 `app.js` 一处，第二套页面必然要复制这些逻辑，改一处忘一处。手机与桌面共用同一份 DOM 与状态，差别只在 CSS 与一层外壳。
+为什么不是“另外做一套移动端页面”：数据、鉴权、音乐队列全在同一批模块里，第二套页面必然要复制这些逻辑，改一处忘一处。手机与桌面共用同一份 DOM 与状态，差别只在 CSS 与一层外壳。
 
 **窄屏细节**（旧版就有的那些坑，仍然是下面这套退路形态与触屏拖拽要守的规则）
 
@@ -551,7 +576,7 @@ git add . && git commit -m "docs: 更新说明" && git push
 
 ### 5. 核对仓库内容
 
-公开仓库里应当只有：`server.js`、`lib/` 四个文件（store / challenges / netease / qqmusic）、`test/` 四个测试、`public/` 五个文件（index.html / style.css / mobile.css / physics.js / app.js）、`package.json`、`README.md`、`LICENSE`、`.gitignore`。看到 `users.json`、`scripts/` 或 `.idea/` 立即 `git rm -r --cached` 并重新推送。
+公开仓库里应当只有：`server.js`、`lib/`（`api.js` / `http.js` / `auth.js` / `db.js` / `store.js` / `challenges.js` 六个文件 + `routes/` 七个 + `music/` 两个）、`test/` 四个测试、`public/`（`index.html` + `physics.js` + `css/` 两个 + `js/` 二十四个）、`package.json`、`README.md`、`LICENSE`、`.gitignore`。看到 `users.json`、`scripts/` 或 `.idea/` 立即 `git rm -r --cached` 并重新推送。
 
 ```bash
 git ls-tree -r --name-only origin/main    # 一眼扫完全清单
@@ -564,18 +589,30 @@ git config --get remote.origin.url        # 确认 URL 里没有嵌 token
 
 没有构建步骤，改完 `public/` 里的文件直接刷新浏览器。改了 `server.js` 或 `lib/` 需要重启进程。
 
+两个约定在前端拆成 ES Module 之后变了：
+
+- **不能双击 `index.html` 直开了**。浏览器对 `file://` 下的模块一律当跨源拒绝，必须起服务（`node server.js`）再访 `http://localhost:3000`。
+- **`node --check` 对 `public/js/*.js` 会误报**。那个命令把 `.js` 当 CommonJS 解析，见到 `import` / `export` 就报语法错，而浏览器恰恰是按模块读它们的。所以前端语法自检走 `node --input-type=module --check`，或者直接跑 `node scripts/esm-check.js`（自己把每个模块当 ESM 编译一遍，顺带对账 import/export 是否对得上）。
+
 ```bash
-node --check server.js       # 语法自检
-node --check public/app.js
+node --check server.js lib/*.js lib/routes/*.js lib/music/*.js   # 后端语法
 npm test                     # 全部端到端测试（自己拉起服务、临时目录，不碰 data/、不联网）
 node test/qqmusic.test.js    # 只跑其中一层（四个测试文件各自独立）
 ```
 
 后端四个测试文件互不依赖，也可以单独跑。前端没有测试框架，靠下面这套真机视口校验兜。
 
+### 前端拆模块后的约束（改 `public/js/` 前先看一眼）
+
+- **模块体只放声明，接线集中在 `init()`**。顶层那几行不再直接操作 DOM，否则谁先执行取决于 import 顺序，拆前拆后不等价。`js/main.js` 按拆前的文件顺序逐个调 `init()`，这个顺序就是当时的执行顺序。
+- **跨模块的状态写一律走 setter**。ESM 的 import 绑定能读不能写，`layout`、`tasks`、`currentId` 这些会被整体重新赋值的变量，写的一方必须调导出侧的 `setXxx()`（见 `js/layout.js` 的 `setLayout`），否则会变成“各自拿着一份旧值”。
+- **不是标识符形式的顶层声明也是声明**。`const { Spring, Ticker } = window.Phys` 这种解构必须留在模块顶层，被当成接线语句搬进 `init()` 就成了局部量，模块里的 `startDrag` 它们根本看不见 —— 拖拽当场报 `ReferenceError`。这类降级 `node --check` 与 import/export 对账都抽不到（那些名字不属于任何模块），所以 `scripts/esm-check.js` 专门盯这一条：`init()` 里声明的名字若被 `init()` 外面引用就是错。
+- **桌面拖拽靠 `window.Phys`**：`public/physics.js` 是普通脚本，在 `index.html` 里排在 `<script type="module">` 之前同步执行，模块求值时它必然已就位（这也是 `panel-drag.js` 顶层能直接解构的原因）。
+- **手机形态不能因为拆文件而回退**：`js/mobile-shell.js` 里 `if (!isMobile())` 决定的只是“给不给装拖拽热区”，CSS 那边 `.edge` / `.grip` 一并藏掉；两侧任何一侧改了都要重跑下面那个校验。
+
 ### 手机端改完怎么验
 
-`public/mobile.css` 和外壳状态机改一处就可能崩掉另一处（比如给 `body` 加 flex 之后，子元素残留的 `margin: 0 auto` 会让整页宽度坍成 0），光看 CSS 看不出来。所以写了个一次性校验脚本 `scripts/mobile-check.js`（`scripts/` 在 `.gitignore` 里，不入库）：
+`public/css/mobile.css` 和外壳状态机改一处就可能崩掉另一处（比如给 `body` 加 flex 之后，子元素残留的 `margin: 0 auto` 会让整页宽度坍成 0），光看 CSS 看不出来。所以写了个一次性校验脚本 `scripts/mobile-check.js`（`scripts/` 在 `.gitignore` 里，不入库）：
 
 ```powershell
 node server.js                      # 先起着服务（默认 3000）
@@ -589,11 +626,13 @@ node scripts/mobile-check.js        # 拉起 Edge 无头，跑完自动退出；
 | 三个视口 360×640 / 390×844 / 430×932 | `body` 打上 `mobile` 类；整页 `scrollHeight/Width` 不得超过视口；时钟页与倒计时页内容不超出卡片自身；没有任何面板横向顶破视口 |
 | 抽屉 | 整屏盖住宽高、八个格子都在视口内且 ≥40px |
 | 全屏 sheet | 音乐弹层铺满整屏、「完成」按钮在视口内、滚动只发生在弹层内部 |
-| 播放条与队列 | 条子整宽贴底；队列面板展开时不挡住 ⏮ ▶ ⏭；有播放条时列表底部留出让位高度 |
+| 播放条与队列 | 条子整宽贴底；队列面板展开时不挡住 ⏮ ▶ ⏭；有播放条时列表底部留出让位高度。这几项**不赌上游音乐接口**：往 `localStorage` 注入一份假队列再刷新，走 `restoreQueue` 那条路把播放条摆出来 |
 | 导航 | 点抽屉条目后抽屉关闭且切到目标页；点左上角标题回时钟页 |
 | CDN 不可达（`Network.setBlockedURLs` 挡 `*jsdelivr*`） | 没 Alpine 也能开抽屉、切好友页、开背景 sheet |
-| 双绑定 | 把 `toggleListen` 包一层计数，抽屉里点一次只能进 1 次（Alpine 在/不在两种情形都验） |
+| 双绑定 | 把 `window.fetch` 包一层计数，数一次点击发出几个 `/queue` 请求：顶栏与抽屉都要求**恰好 1 个**（叠了两层绑定就是 2 个）。不数 `play()`：那个既受自动播放策略影响、又受上游有没有曲目影响 |
+| 模块加载 | 盯 `Runtime.exceptionThrown` 与 `source === javascript` 的错误日志，再加 `Network.responseReceived` 里 `/js/*.js` 的响应码≥400 ——ESM 拆坏了不会抛异常，只会默默白屏；资源类报错（favicon 404、脚本自己触发的 409/401）单独打 INFO，不混进页面错误 |
 | 桌面回归 1280×800 | 不打 `mobile` 类、汉堡与抽屉 `display: none`、仍是两列且任务栏在右、顶栏四入口与拖拽热区都在、标题没被 Alpine 改掉、无横向滚动 |
+| 桌面拖拽（真按真拖） | 用 CDP `Input.dispatchMouseEvent` 在 `#panel-tasks .edge-l` 上按下、向左拖、释放，断言 `layoutV2` 存档真的变了、任务卡进了 `col-a`、`body` 上没有残留的 `.card`，跑完清存档复原 |
 
 截图落在系统临时目录（脚本末尾会打印路径），改样式时对着看比读代码快。注意脚本里的 `.click()` 不算用户手势，无头浏览器会拦下 `audio.play()`，所以别用 `audio.paused` 判定听歌是否生效。
 
