@@ -1722,7 +1722,11 @@ function previewSong(s) {
   playCurrent()
 }
 
-$('btn-music').onclick = openMusic
+$('btn-music').onclick = () => {
+  // 顶栏按钮在未登录时也是可见的，先挡一下：不然 api 拿 401 会把刚打开的弹窗连同界面一起踢回登录页
+  if (!token) return toast('先登录，音乐设置存在服务端的账号上')
+  openMusic()
+}
 $('btn-music-close').onclick = closeMusic
 $('music-modal').addEventListener('click', (e) => { if (e.target.id === 'music-modal') closeMusic() })
 $('btn-music-save').onclick = () => {
