@@ -11,7 +11,7 @@ const http = require('http')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const qq = require('../lib/qqmusic')
+const qq = require('../lib/music/qqmusic')
 
 const PORT = 3715
 const DATA = path.join(os.tmpdir(), `clock-qq-test-${process.pid}`)

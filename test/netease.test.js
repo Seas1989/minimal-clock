@@ -11,7 +11,7 @@ const http = require('http')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const ne = require('../lib/netease')
+const ne = require('../lib/music/netease')
 
 const PORT = 3713
 const DATA = path.join(os.tmpdir(), `clock-netease-test-${process.pid}`)
