@@ -69,10 +69,8 @@ export async function deleteTask(id) {
   } catch (e) { toast(e.message) }
 }
 
-export function selectTask(id) {
-  if (mode === 'clock') return
-  setSelection(selectedId === id ? null : id)
-}
+/* selectTask 已经没了：任务行现在整行就是「进专注」的入口（task-list.js），
+ * 旧的“点一下只是选中、clock 页下点了还根本不动”这条路不再存在 */
 
 // 换选中任务后要刷新的四处（列表高亮 / 窗口坞 / 控制面板 / 大表盘）集中在这里，
 // 免得以后新增一处渲染就漏一处

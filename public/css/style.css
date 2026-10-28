@@ -215,7 +215,10 @@ header .link-btn:hover { color: var(--fg-out); }
   font-variant-numeric: tabular-nums;
   letter-spacing: 2px;
   line-height: 1.1;
+  /* 暂停不是硬切：缩一点、暗一点，150ms ease-out，恢复时反过来走同一条曲线 */
+  transition: transform 0.15s ease-out, opacity 0.15s ease-out;
 }
+.big-time.paused, .focus-time.paused { transform: scale(0.97); opacity: 0.55; }
 
 .sub-time {
   text-align: center;
@@ -276,29 +279,67 @@ h2 {
 }
 
 .task-item {
-  padding: 14px 0;
+  min-height: 56px;   /* 整行固定行高：不管有没有副标题、名字长短，手指落点都一样 */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 0;
   border-bottom: 1px solid var(--line);
   cursor: pointer;
 }
 .task-item:last-child { border-bottom: none; }
 .task-item.selected .task-name { text-decoration: underline; }
+.task-item:hover .task-name { color: var(--fg); }
 
-.task-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.task-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .task-name { font-size: 15px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-actions { flex-shrink: 0; display: flex; gap: 6px; }
-.task-time { font-size: 13px; color: var(--fg-weak); font-variant-numeric: tabular-nums; margin-top: 4px; }
+/* 循环周期以前拼在任务名里（↻每周），看着像个重新加载按钮：现在单独一个小字 chip */
+.task-rec {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--fg-weak);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.task-actions { flex-shrink: 0; display: flex; align-items: center; gap: 2px; }
+.task-time { font-size: 13px; color: var(--fg-weak); font-variant-numeric: tabular-nums; }
 
+/* 行尾那一排图标按钮：统一 36×36 命中区、同一个基线，暂停态与播放态字号一致 */
 .icon-btn {
   border: none;
   background: transparent;
   color: var(--fg-weak);
   cursor: pointer;
-  font-size: 15px;
-  padding: 2px 4px;
-  border-radius: 6px;
+  font-size: 16px;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border-radius: 8px;
   transition: color 0.2s;
 }
 .icon-btn:hover { color: var(--fg); }
+.icon-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* 播放 / 暂停交叉淡入：两个字形叠在同一个 36×36 里，靠透明度换位，不是换 textContent 硬切 */
+.play-btn { position: relative; }
+.play-btn .ico {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: opacity 0.18s ease-out;
+}
+.play-btn .ico-pause { opacity: 0; }
+.play-btn.on .ico-play { opacity: 0; }
+.play-btn.on .ico-pause { opacity: 1; }
 
 .empty-tip { color: var(--fg-weak); font-size: 14px; text-align: center; padding: 20px 0; }
 
@@ -458,7 +499,23 @@ select {
   width: 100%;
 }
 .focus-name { font-size: 15px; letter-spacing: 3px; color: var(--fg-weak); }
-.focus-time { font-size: clamp(44px, 15vw, 104px); line-height: 1.05; font-variant-numeric: tabular-nums; }
+.focus-time {
+  font-size: clamp(44px, 15vw, 104px);
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  transition: transform 0.15s ease-out, opacity 0.15s ease-out;
+}
+/* 专注顶部那条窄排名条：不跳出去也能看到自己在哪、差第一名多少 */
+.focus-rank {
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--fg-weak);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 12px;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+}
 .focus-sub { font-size: 13px; color: var(--fg-weak); }
 .focus-bar {
   width: 100%;
@@ -472,13 +529,66 @@ select {
 #rest-len-row { width: 100%; max-width: 320px; }
 /* 确认框要盖在专注/休息层之上：在专注里点暂停，问“要不要休息”的弹窗就在这一层 */
 #confirm-modal { z-index: 50; }
+/* 结算画面：倒计时跑完时它要盖在专注/休息层(20)与手机抽屉(40)之上，仍让确认框(50)压它上面 */
+#result-modal { z-index: 46; }
+.result-title { font-size: 13px; letter-spacing: 2px; color: var(--fg-weak); margin-bottom: 12px; }
+.result-rank { font-size: 22px; font-weight: 300; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.result-gap { font-size: 13px; color: var(--fg-weak); margin-top: 10px; font-variant-numeric: tabular-nums; }
 
-/* ---------- 同任务挑战 ---------- */
+/* ---------- 同任务挑战：入口收在顶栏「⚑ 挑战」里，列表住在这个浮层 ---------- */
+
+#challenge-hub {
+  backdrop-filter: blur(12px) saturate(0.8);
+  -webkit-backdrop-filter: blur(12px) saturate(0.8);
+}
+#challenge-list { display: flex; flex-direction: column; gap: 12px; }
+/* 「刚刚更新」：一句话而不是一个按钮 —— 数据是自己 30 秒拉一次的 */
+.challenge-sync {
+  font-size: 12px;
+  color: var(--fg-weak);
+  letter-spacing: 1px;
+  margin: 6px 0 14px;
+  font-variant-numeric: tabular-nums;
+}
+/* 卡片高度交给内容：标题最多两行，绝不单行截断成省略号。
+ * 这里故意不用 flex 排卡片内部：flex 子项会被 blockify，`display: -webkit-box` 算成 flow-root，
+ * 两行封顶就直接失效（长标题要么全摆出来、要么被 overflow 硬裁）。行间距用 `+ *` 选。 */
+.ch-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.ch-card > * + * { margin-top: 6px; }
+.ch-card:hover { border-color: var(--fg-weak); }
+.ch-card.req { background: var(--card); }
+.ch-title {
+  font-size: 15px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+}
+.ch-meta, .ch-state { font-size: 12px; color: var(--fg-weak); line-height: 1.5; }
+.ch-sum { font-size: 13px; font-variant-numeric: tabular-nums; }
+.ch-btns { display: flex; gap: 8px; margin-top: 10px; }
+.ch-btns .ctrl-btn, .ch-btns .ghost-btn { padding: 7px 14px; font-size: 13px; }
 
 #challenge-modal {
   /* 点进申请或排行时其余内容雾化：和专注层一个路子，只是模糊得轻一点 */
   backdrop-filter: blur(12px) saturate(0.8);
   -webkit-backdrop-filter: blur(12px) saturate(0.8);
+}
+/* 详情顶部那一行名次摘要：卡片上只给了短句，这里把差距说全 */
+.rank-sum {
+  font-size: 13px;
+  color: var(--fg-weak);
+  margin: -6px 0 12px;
+  font-variant-numeric: tabular-nums;
 }
 .rank-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .rank-row {
@@ -489,6 +599,21 @@ select {
   border-bottom: 1px solid var(--line);
 }
 .rank-row:last-child { border-bottom: none; }
+/* 人多时先只给前几名，自己的行被搜到后面时中间插一条分隔，免得看着像漏了人 */
+.rank-gap { text-align: center; font-size: 12px; color: var(--fg-weak); padding: 2px 0; letter-spacing: 4px; }
+.rank-more {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-weak);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-top: 10px;
+  align-self: center;
+  transition: color 0.2s, border-color 0.2s;
+}
+.rank-more:hover { color: var(--fg); border-color: var(--fg); }
 .rank-row.me { box-shadow: inset 0 0 0 1px var(--line); border-radius: 10px; padding-left: 8px; padding-right: 8px; background: var(--card); }
 .rank-no { flex: 0 0 18px; text-align: center; font-size: 13px; color: var(--fg-weak); }
 .rank-main { flex: 1; min-width: 0; }
@@ -962,4 +1087,14 @@ label.ghost-btn.small { cursor: pointer; }
   .theme-dot:hover { transform: none; } /* 按下去弹一下又不回位，看着像渲染错了 */
   .twin:hover { border-color: var(--line); }   /* 刚点过的那个窗不该一直亮着边（选中态由 .twin.active 负责） */
   .like-btn:hover:not(:disabled) { border-color: var(--line); color: var(--fg-weak); }
+}
+
+/* ---------- 用户要求减少动效：这一轮新加的过渡全部关掉 ----------
+ * 只拆 transition / animation 与靠 transform 做的位移缩放；暂停那个“暗一点”是状态提示不是动画，留着 */
+@media (prefers-reduced-motion: reduce) {
+  .big-time, .focus-time, .play-btn .ico, .icon-btn, .ch-card, .like-btn, .tab,
+  .ctrl-btn, .ghost-btn, .twin, .rank-more, .card { transition: none; }
+  .big-time.paused, .focus-time.paused { transform: none; }
+  .drawer, .queue-pop, .ghost { animation: none; }
+  .theme-dot:hover { transform: none; }
 }

@@ -20,6 +20,8 @@
       <button id="btn-bg" class="link-btn">背景</button>
       <button id="btn-listen" class="link-btn">▶ 听歌</button>
       <button id="btn-music" class="link-btn">音乐</button>
+      <!-- 挑战不再占主界面一块：收在这一个入口里，点开才是列表 -->
+      <button id="btn-challenges" class="link-btn">⚑ 挑战</button>
       <div id="theme-picker"></div>
       <span id="user-box" class="hidden">
         <span id="user-name"></span>
@@ -38,7 +40,7 @@
       <button class="drawer-cell" data-goto="display" :class="{ on: view === 'display' }" @click="go('display')"><b>⏱</b><span>时钟</span></button>
       <button class="drawer-cell" data-goto="tasks" :class="{ on: view === 'tasks' }" @click="go('tasks')"><b>☑</b><span>任务列表</span></button>
       <button class="drawer-cell" data-goto="friends" :class="{ on: view === 'friends' }" @click="go('friends')"><b>◎</b><span>好友</span></button>
-      <button class="drawer-cell" data-goto="challenges" :class="{ on: view === 'challenges' }" @click="go('challenges')"><b>⚑</b><span>同任务挑战</span></button>
+      <button class="drawer-cell" data-sheet="challenges" @click="sheet('challenges')"><b>⚑</b><span>同任务挑战</span></button>
       <button class="drawer-cell" data-sheet="music" @click="sheet('music')"><b>♪</b><span>音乐</span></button>
       <button class="drawer-cell" data-sheet="bg" @click="sheet('bg')"><b>▣</b><span>背景美化</span></button>
       <button class="drawer-cell" data-act="listen" @click="listenToggle()"><b id="drawer-listen-icon">▶</b><span id="drawer-listen-text">听歌</span></button>
@@ -133,10 +135,6 @@
         <div id="friend-list"></div>
       </section>
 
-      <section class="card challenge-card" id="panel-challenges" data-panel="challenges">
-        <h2>同任务挑战</h2>
-        <div id="challenge-list"></div>
-      </section>
     </div>
   </main>
 
@@ -174,11 +172,24 @@
     </div>
   </div>
 
+  <!-- 挑战中心：默认收起，点顶栏「⚑ 挑战」或手机抽屉里那一格才展开 -->
+  <div id="challenge-hub" class="modal hidden">
+    <div class="modal-box wide">
+      <h3>同任务挑战</h3>
+      <p class="challenge-sync" id="challenge-sync"></p>
+      <div id="challenge-list"></div>
+      <div class="modal-actions">
+        <button id="btn-hub-close" class="ctrl-btn solid">完成</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 挑战详情：按完成进度排行，可给成员点赞 -->
   <div id="challenge-modal" class="modal hidden">
     <div class="modal-box wide">
       <h3 id="challenge-title">挑战</h3>
       <p id="challenge-meta" class="share-task-name"></p>
+      <p id="challenge-rank-sum" class="rank-sum"></p>
       <div id="challenge-rank" class="rank-list"></div>
       <div id="challenge-invite" class="share-friends"></div>
       <div class="modal-actions">
@@ -191,6 +202,7 @@
   <!-- 专注模式：整页雾化，只留下当前这个计时窗 -->
   <div id="focus" class="focus hidden">
     <div class="focus-inner">
+      <div id="focus-rank" class="focus-rank hidden"></div>
       <div id="focus-name" class="focus-name"></div>
       <div id="focus-time" class="focus-time">00:00</div>
       <div id="focus-sub" class="focus-sub"></div>
@@ -281,6 +293,19 @@
       <div class="modal-actions">
         <button id="btn-confirm-no" class="ghost-btn">取消</button>
         <button id="btn-confirm-yes" class="ctrl-btn solid">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 结算画面：带挑战的倒计时跑到 0 时弹一次，只说最终名次与差距 -->
+  <div id="result-modal" class="modal hidden">
+    <div class="modal-box small">
+      <p id="result-title" class="result-title"></p>
+      <p id="result-rank" class="result-rank"></p>
+      <p id="result-gap" class="result-gap"></p>
+      <div class="modal-actions">
+        <button id="btn-result-rank" class="ghost-btn">看排行</button>
+        <button id="btn-result-close" class="ctrl-btn solid">知道</button>
       </div>
     </div>
   </div>

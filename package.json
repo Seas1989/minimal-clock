@@ -1,11 +1,14 @@
 {
   "name": "minimal-clock",
   "version": "1.4.0",
-  "description": "零依赖极简时钟：倒计时 / 正计时 / 当前时间，多任务多窗口、同任务挑战、休息时放网易云或 QQ 音乐、自定义背景与可拖拽面板布局，手机端整屏形态（汉堡抽屉 + 全屏视图 + 页面不滚）",
+  "description": "极简时钟：倒计时 / 正计时 / 当前时间，多任务多窗口、同任务挑战、休息时放网易云或 QQ 音乐、自定义背景与可拖拽面板布局，手机端整屏形态（汉堡抽屉 + 全屏 sheet + 页面不滚）；npm 依赖为零，手机端外壳用 CDN 上的 Alpine 管两个状态（缺席也能用）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "test": "node test/store.test.js && node test/challenge.test.js && node test/netease.test.js && node test/qqmusic.test.js"
+  },
+  "runtimeDependencies": {
+    "alpinejs": "3.14.9（CDN defer，仅手机端抽屉的 view / drawer 两个状态；jsdelivr 不通时 js/mobile-shell.js 用同一批 data-* 退回原生绑定）"
   },
   "engines": {
     "node": ">=16"
@@ -15,7 +18,6 @@
     "countdown",
     "timer",
     "pomodoro",
-    "zero-dependency",
     "spring-physics",
     "responsive"
   ],

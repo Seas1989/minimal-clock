@@ -4,7 +4,6 @@ import { $ } from './state.js'
 import { logout } from './auth.js'
 import { refresh } from './task-actions.js'
 import { loadFriends } from './friends.js'
-import { loadChallenges } from './challenges.js'
 import { tickDisplay } from './display.js'
 import { audioEl, queue, toggleListen } from './music.js'
 
@@ -12,7 +11,9 @@ import { audioEl, queue, toggleListen } from './music.js'
  * 页面长什么样全在 mobile.css 里由 body[data-view="…"] 决定。状态真源存在下面的普通变量里，
  * Alpine 只是它的绑定镜像 —— 所以 jsdelivr 不通时（离线 / 被墙）这些入口会退回原生 click，
  * 形态与功能都不缺，只少了抽屉里当前页的高亮 */
-const VIEWS = { display: '时钟', tasks: '任务列表', friends: '好友', challenges: '同任务挑战' }
+/* 抽屉里“同任务挑战”不占一个 view：它走 sheet（直接点顶栏那个 ⚑ 按钮弹浮层），
+ * 所以这里只列主界面真的会整屏切过去的那三页 */
+const VIEWS = { display: '时钟', tasks: '任务列表', friends: '好友' }
 const mqMobile = window.matchMedia('(max-width: 760px)')
 let mobView = localStorage.getItem('mView')
 export let mobDrawer = false
@@ -30,7 +31,6 @@ function applyView(v, persist = true) {
   if (!isMobile()) return
   if (mobView === 'tasks') void refresh()
   else if (mobView === 'friends') void loadFriends()
-  else if (mobView === 'challenges') void loadChallenges()
   else tickDisplay()
 }
 

@@ -47,11 +47,31 @@ export function beep() {
   } catch { /* 忽略音频错误 */ }
 }
 
-export function notifyComplete(task) {
+/* 结算画面：只在“带挑战的倒计时”跑完时弹，平时仍然只有一条 toast。
+ * 它只负责把话摆出来：名次怎么算、点「看排行」进哪个挑战，都归挑战那个模块定 */
+let resultId = null
+export function showResult({ title, rank, gap, challengeId }) {
+  $('result-title').textContent = title
+  $('result-rank').textContent = rank
+  $('result-gap').textContent = gap || ''
+  $('result-gap').classList.toggle('hidden', !gap)
+  $('btn-result-rank').classList.toggle('hidden', !challengeId)
+  resultId = challengeId || null
+  $('result-modal').classList.remove('hidden')
+}
+export const resultChallengeId = () => resultId
+export function closeResult() {
+  $('result-modal').classList.add('hidden')
+  resultId = null
+}
+
+export function notifyComplete(task, result) {
   beep()
-  toast(`⏰ 「${task.name}」已完成`)
   setTitleFlash(`⏰ ${task.name} 完成！`)
-  setTimeout(() => { setTitleFlash('')}, 6000)
+  setTimeout(() => { setTitleFlash('') }, 6000)
+  // 带挑战的倒计时跑完才弹结算画面（最终名次 + 与第一名的差距）；平时只留一条 toast，不该拿弹窗拦人
+  if (result) showResult(result)
+  else toast(`⏰ 「${task.name}」已完成`)
 }
 
 /* 顶层接线：DOM 事件与初始渲染。原来直接摊在 app.js 顶层，
@@ -62,5 +82,9 @@ export function init() {
   $('btn-confirm-no').onclick = () => closeConfirm(false)
 
   $('confirm-modal').addEventListener('click', (e) => { if (e.target.id === 'confirm-modal') closeConfirm(false) })
+
+  $('btn-result-close').onclick = closeResult
+
+  $('result-modal').addEventListener('click', (e) => { if (e.target.id === 'result-modal') closeResult() })
 
 }

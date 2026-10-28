@@ -363,8 +363,9 @@ export function init() {
   document.querySelectorAll('#layout-preset-group button').forEach((btn) => {
     btn.onclick = () => {
       layout.mode = btn.dataset.preset
-      if (layout.mode === 'stack') { layout.a = ['display']; layout.b = ['tasks', 'friends', 'challenges'] }
-      else if (layout.mode === 'left') { layout.a = ['display']; layout.b = ['tasks', 'friends', 'challenges'] }
+      /* 挑战略：主界面不再给它留一块，模板里也就只剩时钟 / 任务 / 好友三张卡 */
+      if (layout.mode === 'stack') { layout.a = ['display']; layout.b = ['tasks', 'friends'] }
+      else if (layout.mode === 'left') { layout.a = ['display']; layout.b = ['tasks', 'friends'] }
       saveLayout(); applyLayout(); toast(`已切换为${btn.textContent}布局`)
     }
   })

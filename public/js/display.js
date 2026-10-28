@@ -3,7 +3,7 @@
 import { $, RING_C, WEEK, bigTime, mode, notified, ringFg, selectedId, subTime, tasks, titleFlash } from './state.js'
 import { notifyComplete } from './ui.js'
 import { clamp } from './background.js'
-import { liveElapsed, pad, serverNow, taskState } from './utils.js'
+import { liveElapsed, pad, resultOfTask, serverNow, taskState } from './utils.js'
 import { act, deleteTask } from './task-actions.js'
 import { tickWindows } from './dock.js'
 import { tickFocus } from './focus.js'
@@ -68,6 +68,7 @@ export function tickDisplay() {
   tickWindows()
   tickFocus()
   if (mode === 'clock') {
+    bigTime.classList.remove('paused')   // 当前时间不存在暂停，从任务页切回来得把那个暗态抹掉
     bigTime.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
     subTime.textContent = `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 ${now.getDate()} 日  ${WEEK[now.getDay()]}`
     updateRing(now.getSeconds() / 60)
@@ -83,6 +84,8 @@ export function tickDisplay() {
     return
   }
   const st = taskState(t)
+  // 暂停时大数字缩一点、暗一点（150ms ease-out 在 CSS 里），和专注层那一个走同一个类
+  bigTime.classList.toggle('paused', t.status !== 'running')
   bigTime.textContent = st.text
   subTime.textContent = `${t.name} · ${st.sub}`
   updateRing(st.frac)
@@ -113,7 +116,8 @@ export function checkCompletion() {
     const remain = t.duration - liveElapsed(t)
     if (remain <= 0 && !notified.has(t.id)) {
       notified.add(t.id)
-      notifyComplete(t)
+      // 带挑战的倒计时才配一块结算画面（最终名次 + 与第一名的差距），没挑战就只是一条 toast
+      notifyComplete(t, resultOfTask(t))
     } else if (remain > 0) {
       notified.delete(t.id)
     }

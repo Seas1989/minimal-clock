@@ -1,6 +1,6 @@
 /* ---------- 工具函数 ---------- */
 
-import { $, CYCLE, REC_LABEL, offset, token } from './state.js'
+import { $, CYCLE, REC_LABEL, challenges, offset, token } from './state.js'
 import { logout } from './auth.js'
 
 export function pad(n) { return String(n).padStart(2, '0') }
@@ -59,4 +59,57 @@ export async function api(path, options = {}) {
   if (res.status === 401) { logout(); throw new Error(data.error || '登录已失效') }
   if (!res.ok) throw new Error(data.error || '请求失败')
   return data
+}
+
+/* ---------- 挑战名次：卡片摘要、专注顶部那条、结算画面共用一份算法 ----------
+ * 三处口径必须一致，否则“卡上第 2 / 详情里第 3”这种矛盾直接就被用户看见。
+ * 只读服务端已有的 members / pending 两个数组，不新增字段、不改接口 */
+
+// 差距按“量级”说人话：比时长时没人关心秒，但几分钟的差距也不能四舍五入成 0
+export function fmtShort(ms) {
+  const s = Math.max(0, Math.round(Math.abs(ms) / 1000))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (h) return `${h} 小时 ${m} 分`
+  if (m) return `${m} 分`
+  return `${s} 秒`
+}
+
+export function rankOf(c) {
+  const members = c.members || []
+  const i = members.findIndex((m) => m.isMe)
+  const total = members.length
+  const pending = (c.pending || []).length
+  const me = i >= 0 ? members[i] : null
+  const top = members[0]
+  return {
+    rank: i >= 0 ? i + 1 : 0,
+    total,
+    me,
+    // 与第一名的差距：累计时长之差（排行本来就是先比轮数再比时长，这里取最直接的那一项）
+    gap: me && i > 0 && top ? fmtShort(top.ms - me.ms) : '',
+    // “满员”在这只说明一件事：发出去的邀请全都同意了，没有还在等人答应的名额
+    stateText: pending ? `还差 ${pending} 人` : total > 1 ? '已满员' : '还差好友加入',
+    // 卡片上只留这一行：没加入的人看不到“你排第几”，就说清现在有几个人在跑
+    line: me ? `你排第 ${i + 1} / 共 ${total} 人` : `共 ${total} 人在跑`,
+  }
+}
+
+// 任务属于哪个挑战（t.challenge 存的是挑战 id）：没有就返回 null
+export function challengeOfTask(t) {
+  return (t && t.challenge && challenges.find((c) => c.id === t.challenge)) || null
+}
+
+/* 结算画面要的那三句话：没绑挑战就返回 null（普通倒计时跑完不该拿弹窗拦人）。
+ * 名次与差距仍然走 rankOf，保证“结算说第 2、点进详情也是第 2” */
+export function resultOfTask(t) {
+  const ch = challengeOfTask(t)
+  if (!ch) return null
+  const r = rankOf(ch)
+  return {
+    title: `「${t.name}」这一轮跑完了`,
+    rank: r.me ? `最终名次：第 ${r.rank} / 共 ${r.total} 人` : `${r.total} 人在跑，你这份还没进榜`,
+    gap: r.me ? (r.gap ? `与第一名差 ${r.gap}` : '当下你就是第一名') : '',
+    challengeId: ch.id,
+  }
 }

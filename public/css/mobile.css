@@ -43,6 +43,7 @@ body.mobile #btn-layout,
 body.mobile #btn-bg,
 body.mobile #btn-listen,
 body.mobile #btn-music,
+body.mobile #btn-challenges,
 body.mobile #user-box { display: none; }
 body.mobile #theme-picker { gap: 10px; }
 body.mobile .theme-dot { width: 22px; height: 22px; }
@@ -81,18 +82,16 @@ body.mobile .card[data-panel] {
 body.mobile .card .edge,
 body.mobile .card .grip { display: none; }
 
-/* 没有 data-view（Alpine 未就绪、JS 出错）时至少看得见时钟，而不是整屏空白 */
+/* 没有 data-view（Alpine 未就绪、JS 出错）时至少看得见时钟，而不是整屏空白。
+ * 挑战不再是主界面的一页：它在抽屉里走 sheet（点顶栏那类入口），不占 data-view */
 body.mobile #panel-display { display: flex; }
 body.mobile #panel-tasks,
-body.mobile #panel-friends,
-body.mobile #panel-challenges { display: none; }
+body.mobile #panel-friends { display: none; }
 
 body.mobile[data-view="tasks"] #panel-display,
-body.mobile[data-view="friends"] #panel-display,
-body.mobile[data-view="challenges"] #panel-display { display: none; }
+body.mobile[data-view="friends"] #panel-display { display: none; }
 body.mobile[data-view="tasks"] #panel-tasks,
-body.mobile[data-view="friends"] #panel-friends,
-body.mobile[data-view="challenges"] #panel-challenges { display: flex; }
+body.mobile[data-view="friends"] #panel-friends { display: flex; }
 
 /* 时钟那一页要「刚好一屏」：表盘跟着视口缩，其余控件压紧凑，正常机型不会触发滚动。
  * 极矮屏（横屏、折叠屏外屏）仍然允许这一页自己滚，宁可滚也不能看不见 */
@@ -117,9 +116,11 @@ body.mobile .new-task { margin-top: 12px; gap: 8px; }
 body.mobile .today-strip { margin-top: 14px; }
 body.mobile h2 { margin-bottom: 12px; }
 
-/* 列表页里的行：拇指点得到才算适配（原来那些 2px 4px 的小按钮在手机上按不准） */
-body.mobile .task-item { padding: 13px 0; }
-body.mobile .icon-btn { padding: 7px 9px; font-size: 17px; }
+/* 列表页里的行：拇指点得到才算适配（原来那些 2px 4px 的小按钮在手机上按不准）。
+ * 行尾按钮同样走 36×36 那一套，手机上只是拉到 40×40，不再是靠 padding 撑 */
+body.mobile .task-item { padding: 12px 0; }
+body.mobile .icon-btn { width: 40px; height: 40px; font-size: 17px; }
+body.mobile .play-btn .ico { font-size: 17px; }
 body.mobile .card .link-btn { font-size: 14px; padding: 8px 10px; }   /* miniBtn 生成的行内小按钮（▸ ↗ ▢ ⌫ 这类文字入口） */
 body.mobile .friend-item { padding: 12px 0; }
 body.mobile .rank-row { padding: 11px 0; }
@@ -217,9 +218,11 @@ body.mobile .layout-tip { margin: 8px 0 14px; }
  * 而 .layout-tip 这个类音乐弹层也在用 —— 一律去掉，别把错的话塞进别的弹层 */
 body.mobile .layout-tip::after { content: none; }
 
-/* 确认框是唯一保持小框居中的弹层：它只有一句话，满屏反而找不到按钮 */
-body.mobile #confirm-modal { padding: 24px 18px; overflow-y: auto; }
-body.mobile #confirm-modal .modal-box {
+/* 确认框与结算画面是唯一保持小框居中的弹层：它们只有一句话，满屏反而找不到按钮 */
+body.mobile #confirm-modal,
+body.mobile #result-modal { padding: 24px 18px; overflow-y: auto; }
+body.mobile #confirm-modal .modal-box,
+body.mobile #result-modal .modal-box {
   min-height: 0;
   margin: auto;
   max-width: 360px;

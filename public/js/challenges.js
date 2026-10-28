@@ -1,16 +1,19 @@
-/* ---------- 同任务挑战：同一个目标、各自打卡、按进度排行 ---------- */
+/* ---------- 同任务挑战：同一个目标、各自打卡、按进度排行 ----------
+ * 主界面不再摆一块挑战区：列表住在「挑战中心」这个浮层里（顶栏 ⚑ 挑战 / 手机抽屉里那一格），
+ * 卡片上只给一行名次摘要，完整排名点进详情看 */
 
-import { $, REC_LABEL, challenges, friends, setChallenges, tasks } from './state.js'
-import { confirmAction, toast } from './ui.js'
+import { $, challenges, friends, setChallenges, tasks } from './state.js'
+import { closeResult, confirmAction, resultChallengeId, toast } from './ui.js'
 import { lsNum } from './background.js'
-import { api } from './utils.js'
+import { api, rankOf } from './utils.js'
 import { refresh } from './task-actions.js'
-import { miniBtn } from './friends.js'
 import { groupLabel } from './task-list.js'
 import { enterFocus } from './focus.js'
 
 let shareTaskId = null
 let challengeId = null
+let lastSync = 0             // 最近一次拉到挑战数据的时间，用来写那句「刚刚更新」
+let rankExpanded = false     // 详情里成员名单超 5 行时的「还有 N 人」展开态
 const shareTargets = new Set()   // 发起弹窗里勾选的好友
 const challengePick = new Set()  // 详情弹窗里勾选的追加邀请对象
 
@@ -18,8 +21,29 @@ export async function loadChallenges() {
   try {
     setChallenges(await api('/api/challenges'))
   } catch { return }
+  lastSync = Date.now()
   renderChallengePanel()
+  renderSyncTip()   // 拉到数据就说一句「刚刚更新」，不等下一秒那个心跳
   if (challengeId) renderChallengeModal() // 弹窗开着时排行也跟着动
+}
+
+/* 「刚刚更新」：一行不显眼的字，不做成按钮 —— 数据是 30 秒自己拉的，没有“手动刷新”这回事 */
+export function renderSyncTip() {
+  const el = $('challenge-sync')
+  if (!el) return
+  if (!lastSync) { el.textContent = ''; return }
+  const s = Math.round((Date.now() - lastSync) / 1000)
+  el.textContent = s < 10 ? '刚刚更新' : s < 60 ? `${s} 秒前更新` : `${Math.floor(s / 60)} 分钟前更新`
+}
+
+export function openHub() {
+  $('challenge-hub').classList.remove('hidden')
+  renderSyncTip()
+  loadChallenges() // 点开就拉一次，不等那个 30 秒轮询
+}
+
+export function closeHub() {
+  $('challenge-hub').classList.add('hidden')
 }
 
 const challengeOf = (id) => challenges.find((c) => c.id === id) || null
@@ -35,7 +59,7 @@ function progText(m, ch) {
 
 const RANK_TAG = { running: '计时中', paused: '已暂停', stopped: '未开始', done: '已完成', none: '未绑定任务' }
 
-/* 面板：待我处理的邀请排最前（能接受也能拒绝），其次是我已参与的 */
+/* 列表：待我处理的邀请排最前（能接受也能拒绝），其次是我已参与的 */
 function renderChallengePanel() {
   const box = $('challenge-list')
   box.innerHTML = ''
@@ -50,24 +74,47 @@ function renderChallengePanel() {
   mine.forEach((c) => box.appendChild(challengeItem(c, false)))
 }
 
+const mkLine = (cls, text) => {
+  const n = document.createElement('div')
+  n.className = cls
+  n.textContent = text
+  return n
+}
+
+// 目标量那一小句：倒计时自带，正计时是发起人补的每轮时长
+function goalText(c) {
+  if (c.duration <= 0) return '不限目标 · 比累计时长'
+  const unit = { daily: '每天', weekly: '每周', monthly: '每月', yearly: '每年' }[c.recurrence] || '每轮'
+  return `${unit}目标 ${Math.round(c.duration / 6e4)} 分钟`
+}
+
+/* 一张卡：标题（最多两行，绝不截断）+ meta 小字 + 一行名次摘要 + 状态文案。
+ * 整张卡就是入口，所以不放「查看」按钮；邀请卡上的接受 / 拒绝是真动作，留着 */
 function challengeItem(c, isInvite) {
-  const row = document.createElement('div')
-  row.className = 'friend-item' + (isInvite ? ' req' : '')
-  const me = c.members.find((m) => m.isMe)
-  const rank = me ? c.members.indexOf(me) + 1 : 0
-  const top = document.createElement('span')
-  top.textContent = isInvite
-    ? `${c.ownerName} 邀你：${c.title}`
-    : `${c.title} · 第 ${rank}/${c.members.length} 名 · ${me ? progText(me, c) : ''}`
-  row.appendChild(top)
-  row.appendChild(miniBtn('查看', () => openChallenge(c.id)))
+  const r = rankOf(c)
+  const card = document.createElement('div')
+  card.className = 'ch-card' + (isInvite ? ' req' : '')
+  card.appendChild(mkLine('ch-title', isInvite ? `${c.ownerName} 邀你一起跑` : c.title))
+  card.appendChild(mkLine('ch-meta', isInvite ? `${c.title} · ${goalText(c)}` : `${c.ownerName} 发起 · ${goalText(c)}`))
+  card.appendChild(mkLine('ch-sum', r.line))
+  card.appendChild(mkLine('ch-state', r.stateText + (r.gap ? ` · 与第一名差 ${r.gap}` : '')))
   if (isInvite) {
-    row.appendChild(miniBtn('接受', () => respondChallenge(c.id, true)))
-    row.appendChild(miniBtn('拒绝', () => respondChallenge(c.id, false)))
-  } else if (me && me.taskId) {
-    row.appendChild(miniBtn('专注', () => enterFocus(me.taskId)))
+    const row = document.createElement('div')
+    row.className = 'ch-btns'
+    const ok = document.createElement('button')
+    ok.className = 'ctrl-btn solid'
+    ok.textContent = '接受'
+    ok.onclick = (e) => { e.stopPropagation(); respondChallenge(c.id, true) }
+    const no = document.createElement('button')
+    no.className = 'ghost-btn'
+    no.textContent = '拒绝'
+    no.onclick = (e) => { e.stopPropagation(); respondChallenge(c.id, false) }
+    row.appendChild(ok)
+    row.appendChild(no)
+    card.appendChild(row)
   }
-  return row
+  card.onclick = () => openChallenge(c.id)   // 点卡片本身进详情，完整排名在那里
+  return card
 }
 
 /* 发起：把任务作为共同目标发给好友（邀请制，对方可拒绝） */
@@ -132,6 +179,7 @@ function renderShareModal() {
 export function openChallenge(id) {
   challengeId = id
   challengePick.clear()
+  rankExpanded = false   // 每次进来都从“只看前几名”开始，不把上一次展开的状态带过来
   renderChallengeModal()
   $('challenge-modal').classList.remove('hidden')
   loadChallenges() // 打开瞬间拉一次最新进度
@@ -145,25 +193,53 @@ export function closeChallenge() {
 function renderChallengeModal() {
   const c = challengeOf(challengeId)
   if (!c) { closeChallenge(); return }
+  const r = rankOf(c)
   $('challenge-title').textContent = c.title
+  // 顶部两行：一行是谁发的、目标多少，一行是名次与状态（卡片上只给了摘要，这里说全）
   $('challenge-meta').textContent = [
     `${c.ownerName} 发起`,
     `${c.members.length} 人参与`,
-    c.duration > 0
-      ? `每轮目标 ${Math.round(c.duration / 6e4)} 分钟${c.recurrence !== 'none' ? ` · ${REC_LABEL[c.recurrence]}循环` : ''}`
-      : '不限目标 · 比累计时长',
+    goalText(c),
+    r.stateText,
   ].join(' · ')
+  $('challenge-rank-sum').textContent = r.me ? `${r.line}${r.gap ? ` · 与第一名差 ${r.gap}` : ''}` : '还没加入：接受邀请后才会出现在榜上'
 
   const rank = $('challenge-rank')
   rank.innerHTML = ''
   const maxMs = Math.max(1, ...c.members.map((m) => m.ms))
-  c.members.forEach((m, i) => rank.appendChild(rankRow(c, m, i, maxMs)))
+  /* 人多时先给前 5 行 + 自己那一行，剩下的收在「还有 N 人」里：
+   * 详情是弹层，手机上满屏滚排名很累，但“我在哪”不能得展开才看得到 */
+  const REST = 5
+  const mineIdx = c.members.findIndex((m) => m.isMe)
+  const shown = rankExpanded || c.members.length <= REST
+    ? c.members.map((m, i) => ({ m, i }))
+    : c.members.slice(0, REST).map((m, i) => ({ m, i }))
+      .concat(mineIdx >= REST ? [{ m: c.members[mineIdx], i: mineIdx, sep: true }] : [])
+  shown.forEach(({ m, i, sep }) => {
+    if (sep) rank.appendChild(dividerRow())
+    rank.appendChild(rankRow(c, m, i, maxMs))
+  })
+  if (!rankExpanded && c.members.length > REST) {
+    const more = document.createElement('button')
+    more.className = 'rank-more'
+    more.textContent = `还有 ${c.members.length - REST} 人，展开看完`
+    more.onclick = () => { rankExpanded = true; renderChallengeModal() }
+    rank.appendChild(more)
+  }
 
   renderChallengeInvite(c)
 
   const leave = $('btn-challenge-leave')
   leave.classList.toggle('hidden', !c.joined)
   leave.textContent = c.isOwner ? '关闭挑战' : '退出挑战'
+}
+
+// 自己那一行被拽到前五名之外时，中间插一条省略分隔，免得看着像漏了两个人
+function dividerRow() {
+  const d = document.createElement('div')
+  d.className = 'rank-gap'
+  d.textContent = '⋯'
+  return d
 }
 
 function rankRow(c, m, i, maxMs) {
@@ -334,5 +410,19 @@ export function init() {
   $('btn-challenge-close').onclick = closeChallenge
 
   $('challenge-modal').addEventListener('click', (e) => { if (e.target.id === 'challenge-modal') closeChallenge() })
+
+  /* 挑战中心：顶栏那个入口默认收起，点开才看得到列表 */
+  $('btn-challenges').onclick = openHub
+
+  $('btn-hub-close').onclick = closeHub
+
+  $('challenge-hub').addEventListener('click', (e) => { if (e.target.id === 'challenge-hub') closeHub() })
+
+  // 结算画面上的「看排行」：ui.js 只负责把画面摆出来，进哪个挑战由这里定（只有 challenges 知道 id）
+  $('btn-result-rank').onclick = () => {
+    const id = resultChallengeId()
+    closeResult()
+    if (id) openChallenge(id)
+  }
 
 }
