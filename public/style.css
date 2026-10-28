@@ -555,6 +555,38 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* MUSIC_U 取法教程：默认折起，要填的时候一点就开，不占住弹窗的一半高度 */
+.music-help {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--fg-weak);
+}
+.music-help summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--fg);
+  list-style-position: inside;
+  user-select: none;
+}
+.music-help ol { padding-left: 18px; margin: 8px 0; }
+.music-help li { margin: 3px 0; }
+.music-help p { margin: 6px 0 0; }
+.music-help a { color: var(--fg); text-decoration: underline; }
+.music-help code, .music-help kbd {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  word-break: break-all;
+}
 
 /* ---------- 共享弹窗 ---------- */
 

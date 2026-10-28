@@ -226,6 +226,16 @@
       </div>
       <div id="music-result" class="music-list"></div>
       <label class="bg-slider">音量<input type="range" id="music-vol" min="0" max="100" step="5" value="60"><span id="music-vol-text" class="bg-tip"></span></label>
+      <details id="music-help" class="music-help">
+        <summary>MUSIC_U 怎么取（在网易云<strong>网页</strong>登录一次，约 1 分钟）</summary>
+        <ol>
+          <li>电脑浏览器打开 <a href="https://music.163.com/" target="_blank" rel="noreferrer">music.163.com</a>，用手机号或二维码登进网页。只在手机 App 里登是拿不到这串的</li>
+          <li>在这个页面按 <kbd>F12</kbd> → <strong>Application（应用）</strong> 标签 → 左侧 <strong>Cookies</strong> → 点 <code>https://music.163.com</code></li>
+          <li>找到 Name 为 <code>MUSIC_U</code> 的那行，复制它的 Value（四百来字符）→ 粘进下面输入框 → 点「保存」</li>
+        </ol>
+        <p class="bg-tip">嫌一步步找麻烦：Network（网络）标签里刷新一次页面，点最上面那条 music.163.com 请求，把 Request Headers 里整行 <code>Cookie:</code> 的内容复制进来也一样，服务端只挑其中的 MUSIC_U，其余直接丢掉。</p>
+        <p class="bg-tip">这一步是<strong>可选</strong>的：不填也能听内置轻音乐和任何公开歌单，只是读不到你自己的收藏，VIP 曲目取不到播放地址。这串通常几十天过期，看到「MUSIC_U 无效或已过期」就照上面重新复制一次。</p>
+      </details>
       <div class="bg-btns">
         <span class="bg-tip">MUSIC_U</span>
         <input type="text" id="music-cookie" maxlength="4200" placeholder="网易云网页端登录后复制 MUSIC_U（整条 Cookie 粘进来也行）">
