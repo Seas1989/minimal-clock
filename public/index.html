@@ -28,7 +28,7 @@
     </div>
   </header>
 
-  <!-- 手机端导航：整屏抽屉（顶栏 ☰ 点开）。入口用 data-* 标出，Alpine 在时走 @click，CDN 不通时 app.js 里用同一批 data-* 补上原生绑定 -->
+  <!-- 手机端导航：整屏抽屉（顶栏 ☰ 点开）。入口用 data-* 标出，Alpine 在时走 @click，CDN 不通时 js/mobile-shell.js 里用同一批 data-* 补上原生绑定 -->
   <div id="drawer" class="drawer">
     <div class="drawer-top">
       <span class="drawer-brand">时钟</span>
@@ -361,9 +361,12 @@
   <audio id="music-audio" preload="auto"></audio>
 
   <script src="physics.js"></script>
-  <script src="app.js"></script>
-  <!-- 手机端外壳的状态机：项目里唯一一处第三方运行时代码。defer 保证 app.js 先跑完（shell() 已定义）；
-       CDN 不通时 Alpine 不会就绪，app.js 里同一批 data-* 入口会退回原生点击绑定，功能不瘫 -->
+  <!-- 前端入口：ES Module。js/ 下一个功能一个文件，main.js 把其余模块 import 进来，
+       再按原来 app.js 的自上而下顺序逐个调用各模块的 init() 做接线 -->
+  <script type="module" src="js/main.js"></script>
+  <!-- 手机端外壳的状态机：项目里唯一一处第三方运行时代码。module 脚本和 defer 脚本都按文档顺序执行，
+       所以 main.js 先跑完（window.shell 已定义）；CDN 不通时 Alpine 不会就绪，js/mobile-shell.js
+       里同一批 data-* 入口会退回原生点击绑定，功能不瘫 -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"
     onerror="window.__noAlpine = 1"></script>
 </body>
