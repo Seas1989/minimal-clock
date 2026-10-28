@@ -547,10 +547,8 @@ function logout() {
   selectedId = null
   // 退出登录只收起休息层：走 endRest 会顺手替用户 resume，可 token 已经没了
   if (rest) { rest = null; $('rest').classList.add('hidden') }
-  musicPause()
-  queue = null
+  musicStop()
   musicCfg = null
-  $('rest-music').classList.add('hidden')
   closeMusic()
   if (focusId) exitFocus()
   showView(false)
@@ -1395,6 +1393,8 @@ function startRest(taskId) {
   renderRest()
   // 解锁必须在任何 await 之前做：Safari 只认用户手势那一次同步调用，先进音乐帧再填地址
   unlockAudio()
+  // 外面已经听着呢：不打断，也不再调 playCurrent（否则这首会被从头放起）
+  if (queue && !queue.temp && !audioEl().paused) { music.owner = 'user'; return }
   musicAutoplay()
 }
 
@@ -1404,7 +1404,8 @@ function endRest(auto) {
   rest = null
   $('rest').classList.add('hidden')
   if (!r) return
-  musicPause()
+  // 只有“休息替他自动开”的那部分才收掉；他自己点开的听歌要继续留在页面上
+  if (music.owner === 'rest') musicStop()
   if (auto) { beep(); toast('休息结束，已继续计时') }
   else toast('已提前结束休息')
   const t = tasks.find((x) => x.id === r.taskId)
@@ -1444,19 +1445,23 @@ $('rest-len').addEventListener('input', () => {
   }
 })
 
-/* ---------- 休息时的音乐：走服务端的网易云只读代理（MUSIC_U 只存 data/，不进仓库） ---------- */
+/* ---------- 音乐：走服务端的网易云只读代理（MUSIC_U 只存 data/，不进仓库） ----------
+ * 底部播放条是全局的，任何界面都能听；只有进休息层时才会自动开始放 */
 
-/* 0 采样的静音 WAV：进休息层时先用它把 <audio> “碰响”，
+/* 0 采样的静音 WAV：第一次播之前先用它把 <audio> “碰响”，
  * 不然等 await 拉完地址再 play()，Safari 会当成非手势调用直接拦下 */
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
 
 let musicCfg = null // { hasCookie, cookieMask, source: { kind, value, label } }
 let queue = null    // { kind, name, playlistId, tracks[], offset, temp? }
-const music = { i: 0, tries: 0, loading: false, warn: '' }
+/* owner 决定休息结束时收不收起：'rest' 是休息自动起的（结束就替他关掉），
+ * 'user' 是他自己点起来的（一直留着，切界面也不停） */
+const music = { i: 0, tries: 0, loading: false, warn: '', owner: '' }
 
-const audioEl = () => $('rest-audio')
+const audioEl = () => $('music-audio')
 const musicVol = () => clamp(lsNum('musicVol', 60), 0, 100) / 100
 const curTrack = () => (queue && queue.tracks && queue.tracks.length ? queue.tracks[music.i] : null)
+const fmtSongTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 
 function unlockAudio() {
   const a = audioEl()
@@ -1475,19 +1480,17 @@ async function loadMusicCfg() {
 }
 
 async function loadQueue(force) {
-  // temp 是弹窗里“试听”临时塞的单曲，进休息必须重拉真正的队列
+  // temp 是弹窗里“试听”临时塞的单曲，要回到正式队列就必须重拉
   if (queue && !force && !queue.temp) return queue
-  $('rest-music').classList.add('hidden')
   let q = null
   try {
     q = await api('/api/netease/queue')
-  } catch (e) { queue = null; toast('音乐没拿到：' + e.message); return null }
-  if (!q || !Array.isArray(q.tracks) || !q.tracks.length) { queue = null; toast('这个来源里没有能读的曲目'); return null }
+  } catch (e) { queue = null; syncPlayer(); toast('音乐没拿到：' + e.message); return null }
+  if (!q || !Array.isArray(q.tracks) || !q.tracks.length) { queue = null; syncPlayer(); toast('这个来源里没有能读的曲目'); return null }
   queue = q
   music.i = (q.offset || 0) % q.tracks.length
   music.tries = 0
   music.warn = ''
-  $('rest-music').classList.remove('hidden')
   renderMusicBar()
   return queue
 }
@@ -1544,7 +1547,43 @@ function musicPause() {
   renderMusicBar()
 }
 
+/* 彻底收摊：暂停 + 丢掉地址 + 清队列 + 藏播放条（休息结束、退出登录、点 ✕ 都走这里） */
+function musicStop() {
+  const a = audioEl()
+  a.pause()
+  if (a.src && a.src !== SILENT_WAV) a.removeAttribute('src')
+  queue = null
+  music.i = 0
+  music.tries = 0
+  music.loading = false
+  music.warn = ''
+  music.owner = ''
+  syncPlayer()
+}
+
+/* 用户自己点“听歌”：不一定要在休息里，之后切面板、选任务都不打断 */
+async function startListen() {
+  if (!token) return toast('先登录，音乐设置存在服务端的账号上')
+  unlockAudio()
+  music.owner = 'user'
+  const q = await loadQueue(true)
+  if (q) playCurrent()
+}
+
+async function toggleListen() {
+  const a = audioEl()
+  if (queue && !a.paused) return musicPause()
+  // 已有正式队列且只是被按停过：接着放，不重新拉队列（否则每次都从随机那首开头）
+  if (queue && !queue.temp && a.src && a.src !== SILENT_WAV) {
+    music.owner = 'user'
+    a.play().then(renderMusicBar).catch(() => playCurrent())
+    return
+  }
+  await startListen()
+}
+
 function musicAutoplay() {
+  music.owner = 'rest'
   loadQueue().then((q) => {
     if (!q) return
     unlockAudio()
@@ -1559,29 +1598,55 @@ function stepMusic(d) {
   playCurrent()
 }
 
+/* 播放条只跟着“有没有队列”显示；body 上再打个标记，让 toast、页面底部、弹窗的「完成」都给它让位 */
+function syncPlayer() {
+  const on = !!queue
+  $('player').classList.toggle('hidden', !on)
+  document.body.classList.toggle('has-player', on)
+  $('btn-listen').textContent = queue && !audioEl().paused ? '⏸ 听歌' : '▶ 听歌'
+}
+
 function renderMusicBar() {
+  syncPlayer()
   if (!queue) return
   const a = audioEl()
   const t = curTrack()
   $('rm-title').textContent = music.warn || (t ? t.name : '—')
   const artist = t ? [t.artists, t.album].filter(Boolean).join(' · ') : ''
+  const d = Number(a.duration) || 0
+  const pos = d > 0 ? ` ${fmtSongTime(a.currentTime)} / ${fmtSongTime(d)}` : ''
   $('rm-sub').textContent = music.warn
     ? ''
-    : `${queue.name} 第 ${music.i + 1}/${queue.tracks.length} 首${artist ? ' · ' + artist : ''}${musicCfg && !musicCfg.hasCookie ? ' · 未填 MUSIC_U（付费歌可能播不了）' : ''}`
-  $('btn-rm-toggle').textContent = a.paused ? '▶ 播放' : '⏸ 暂停'
-  const d = Number(a.duration) || 0
+    : `${queue.name} 第 ${music.i + 1}/${queue.tracks.length} 首${artist ? ' · ' + artist : ''}${pos}${musicCfg && !musicCfg.hasCookie ? ' · 未填 MUSIC_U（付费歌可能播不了）' : ''}`
+  $('btn-rm-toggle').textContent = a.paused ? '▶' : '⏸'
   $('rm-fill').style.width = music.loading ? '35%' : d > 0 ? `${clamp((a.currentTime / d) * 100, 0, 100).toFixed(2)}%` : '0%'
 }
 
 $('btn-rm-prev').onclick = () => stepMusic(-1)
 $('btn-rm-next').onclick = () => stepMusic(1)
+$('btn-rm-close').onclick = musicStop
+$('btn-listen').onclick = () => { void toggleListen() }
+$('btn-music-play').onclick = () => { void startListen() }
+
+/* 进度条上点一下就是调位：听歌时想跳回开头不用回到弹窗 */
+$('rm-bar').addEventListener('click', (e) => {
+  const a = audioEl()
+  const d = Number(a.duration) || 0
+  if (!d) return
+  const box = e.currentTarget.getBoundingClientRect()
+  const ratio = clamp((e.clientX - box.left) / Math.max(1, box.width), 0, 1)
+  try { a.currentTime = ratio * d } catch { /* 地址还没就绪 */ }
+  renderMusicBar()
+})
+
 $('btn-rm-toggle').onclick = () => {
   const a = audioEl()
   // 用户主动点 ▶ 就当“再试一次”：之前连跳 5 首设的熔断得重新关掉，否则这个按钮永远是死的
   music.tries = 0
   music.warn = ''
-  if (!queue || queue.temp) { loadQueue(true).then((q) => q && playCurrent()); return }
+  if (!queue || queue.temp) { void startListen(); return }
   if (a.paused) {
+    music.owner = 'user' // 手点起来的，休息结束就别替用户关掉
     if (!a.src || a.src === SILENT_WAV) playCurrent()
     else { a.play().then(renderMusicBar).catch(() => playCurrent()) }
   } else musicPause()
@@ -1626,7 +1691,13 @@ function syncMusicModal() {
 async function saveMusicCfg(patch) {
   try {
     musicCfg = await api('/api/netease/config', { method: 'POST', body: JSON.stringify(patch) })
-    queue = null // 来源变了，下次休息重拉队列
+    // 换了来源（kind / value）手上的队列就作废；正在听就顺着切到新来源，而不是留个对不上的旧队列
+    if ((patch.kind != null || patch.value != null) && queue) {
+      const wasPlaying = !audioEl().paused
+      queue = null
+      syncPlayer()
+      if (wasPlaying) void startListen()
+    }
     syncMusicModal()
     return true
   } catch (e) { toast(e.message); return false }
@@ -1718,7 +1789,7 @@ function previewSong(s) {
   music.i = 0
   music.tries = 0
   music.warn = ''
-  $('rest-music').classList.remove('hidden')
+  music.owner = 'user' // 用户主动点的试听，出了弹窗也该接着响
   playCurrent()
 }
 
@@ -1781,6 +1852,11 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault()
     const t = selectedTask()
     if (t) act(t.id, t.status === 'running' ? 'pause' : t.status === 'paused' ? 'resume' : 'start')
+  }
+  // M 切听歌：不用先选任务也不用开弹窗；Ctrl / ⌘ 的组合让给浏览器
+  if ((e.key === 'm' || e.key === 'M') && token && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    e.preventDefault()
+    void toggleListen()
   }
 })
 

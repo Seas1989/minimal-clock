@@ -510,11 +510,38 @@ select {
 .share-friends:empty { min-height: 0; }
 #share-goal-row { margin-bottom: 12px; }
 
-/* ---------- 休息时的音乐 ---------- */
+/* ---------- 播放条（全局：任何界面都能听，只是进休息时才会自动接上） ---------- */
 
-/* 播放条默认收起，拉到队列了才占位，不破坏休息层的居中美 */
-.rest-music { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; margin-top: 4px; }
-.rm-title { font-size: 15px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 拉到队列才占位；没在放东西时页面保持原来的极简 */
+.player {
+  position: fixed;
+  left: 50%;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 25;   /* 高于专注 / 休息层（20），低于 toast（30）与确认框（50） */
+  width: min(620px, calc(100vw - 24px));
+}
+.player-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: var(--card-solid);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+}
+.player-main { flex: 1 1 150px; min-width: 0; }
+.player-btns { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.player-btns .ctrl-btn { padding: 7px 18px; font-size: 15px; }
+.player-btns .ghost-btn.small { padding: 7px 12px; }
+/* 进度条整行宽，并且可点：听歌时想跳回开头不用回到弹窗 */
+.player-bar { flex: 1 0 100%; order: 3; height: 5px; border-radius: 999px; background: var(--line); cursor: pointer; }
+.player-bar > i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--fg); transition: width 0.2s linear; }
+.rm-title { font-size: 14px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rm-sub {
   font-size: 12px;
   color: var(--fg-weak);
@@ -523,7 +550,20 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.rm-bar { max-width: 260px; }
+/* 浮层占掉底部一条，别把最后一页内容、弹窗的「完成」按钮、以及 toast 压在它下面 */
+body.has-player .toast { bottom: 96px; }
+body.has-player #app-view { padding-bottom: 104px; }
+body.has-player .modal { padding-bottom: 104px; }
+body.has-player .focus { padding-bottom: 104px; }   /* 休息层是居中的，矮屏上进度条会被播放条盖住 */
+kbd {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--fg);
+}
 #music-modal {
   /* 和挑战详情一个路子：背后雾化得轻一点，焦点留给弹窗本身 */
   backdrop-filter: blur(10px) saturate(0.85);
@@ -834,6 +874,16 @@ label.ghost-btn.small { cursor: pointer; }
   .edge-l, .edge-r { width: 22px; }
   .card .grip { width: 34px; height: 14px; }
   .toast { bottom: calc(24px + env(safe-area-inset-bottom)); max-width: 92vw; }
+
+  /* 播放条：手机上按“曲名 / 按钮 / 进度”三行铺，拇指点得到，页面底部也就多留一条 */
+  .player { width: calc(100vw - 16px); bottom: calc(10px + env(safe-area-inset-bottom)); }
+  .player-inner { gap: 6px 8px; padding: 9px 10px; }
+  .player-main { flex: 1 1 100%; }
+  .player-btns { width: 100%; justify-content: center; }
+  body.has-player .toast { bottom: calc(150px + env(safe-area-inset-bottom)); }
+  body.has-player #app-view,
+  body.has-player .modal,
+  body.has-player .focus { padding-bottom: 164px; }
 
   /* 窗口坞：手机上按半排铺开，⤢ / ✕ 拇指才点得到；专注层按钮多，允许换行 */
   .twin { flex: 1 1 calc(50% - 4px); padding: 9px 10px; }

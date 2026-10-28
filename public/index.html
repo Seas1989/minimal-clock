@@ -13,6 +13,7 @@
     <div class="header-right">
       <button id="btn-layout" class="link-btn">布局</button>
       <button id="btn-bg" class="link-btn">背景</button>
+      <button id="btn-listen" class="link-btn">▶ 听歌</button>
       <button id="btn-music" class="link-btn">音乐</button>
       <div id="theme-picker"></div>
       <span id="user-box" class="hidden">
@@ -187,25 +188,15 @@
         <button id="btn-rest-end" class="ctrl-btn solid">结束休息</button>
       </div>
       <label class="bg-slider" id="rest-len-row">下次休息<input type="range" id="rest-len" min="1" max="30" step="1" value="5"><span id="rest-len-text" class="bg-tip"></span></label>
-      <!-- 休息时的音乐：进休息层自动接上队列，可切歌/暂停 -->
-      <div id="rest-music" class="rest-music hidden">
-        <div class="btn-row">
-          <button id="btn-rm-prev" class="ghost-btn small">⏮ 上一首</button>
-          <button id="btn-rm-toggle" class="ctrl-btn solid">▶ 播放</button>
-          <button id="btn-rm-next" class="ghost-btn small">下一首 ⏭</button>
-        </div>
-        <div id="rm-title" class="rm-title"></div>
-        <div id="rm-sub" class="rm-sub"></div>
-        <div class="focus-bar rm-bar"><i id="rm-fill"></i></div>
-      </div>
+      <!-- 音乐不在这一层里：底部播放条是全局面板，进休息时它自然浮在这一层之上 -->
     </div>
   </div>
 
-  <!-- 休息时的音乐：走服务端代理读网易云，MUSIC_U 只存 data/，不入库 -->
+  <!-- 音乐：走服务端代理读网易云，MUSIC_U 只存 data/，不入库 -->
   <div id="music-modal" class="modal hidden">
     <div class="modal-box wide">
-      <h3>休息时的音乐</h3>
-      <p class="layout-tip">休息倒计时里自动播。不填 MUSIC_U 也能用：默认放内置的<strong>轻音乐歌单</strong>，取不到地址的付费曲目会自动排到后面。</p>
+      <h3>音乐</h3>
+      <p class="layout-tip">队列在<strong>任何界面都能放</strong>（顶栏「▶ 听歌」或按 <kbd>M</kbd>），只是进休息时会自动开始放。不填 MUSIC_U 也能用：默认放内置的<strong>轻音乐歌单</strong>，取不到地址的付费曲目会自动排到后面。</p>
       <div class="bg-btns">
         <span class="bg-tip">来源</span>
         <div class="fit-group" id="music-kind-group">
@@ -244,6 +235,7 @@
       </div>
       <div id="music-status" class="bg-tip"></div>
       <div class="modal-actions">
+        <button id="btn-music-play" class="ghost-btn">▶ 播放这个来源</button>
         <button id="btn-music-close" class="ctrl-btn solid">完成</button>
       </div>
     </div>
@@ -308,8 +300,25 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <!-- 休息时的播放元素：放在层外，收起了也在走，不会被 display:none 影响 -->
-  <audio id="rest-audio" preload="auto"></audio>
+  <!-- 播放条：任何界面都能听（顶栏 ▶ 听歌 / 音乐弹窗里的队列），进休息时才会自动接上 -->
+  <div id="player" class="player hidden">
+    <div class="player-inner">
+      <div class="player-main">
+        <div id="rm-title" class="rm-title"></div>
+        <div id="rm-sub" class="rm-sub"></div>
+      </div>
+      <div class="player-btns">
+        <button id="btn-rm-prev" class="ghost-btn small" title="上一首">⏮</button>
+        <button id="btn-rm-toggle" class="ctrl-btn solid">▶</button>
+        <button id="btn-rm-next" class="ghost-btn small" title="下一首">⏭</button>
+        <button id="btn-rm-close" class="ghost-btn small" title="停止并收起">✕</button>
+      </div>
+      <div class="player-bar" id="rm-bar" title="点一下拖到那个位置"><i id="rm-fill"></i></div>
+    </div>
+  </div>
+
+  <!-- 播放元素：放在所有层外面，收起播放条也不会把它 display:none 掉，声音不中断 -->
+  <audio id="music-audio" preload="auto"></audio>
 
   <script src="physics.js"></script>
   <script src="app.js"></script>
